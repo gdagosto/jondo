@@ -65,7 +65,7 @@ namespace Jondo.Unity.Launcher.Setup
             int copied = 0;
             foreach (string mod in LauncherService.ShippedMods)
             {
-                string shipped = Path.Combine(emulatorRoot, mod, mod + ".dll");
+                string shipped = LauncherService.ShippedModPath(emulatorRoot, mod);
                 if (!File.Exists(shipped)) continue;
                 string installed = Path.Combine(mods, mod + ".dll");
                 if (File.Exists(installed) && LauncherService.SameContent(installed, shipped)) continue;
@@ -155,6 +155,7 @@ namespace Jondo.Unity.Launcher.Setup
             foreach (string argument in HiddenRun) start.ArgumentList.Add(argument);
             // The mods find the emulator's data; the client is closed before it reaches its login.
             start.Environment["JONDO_EMULATOR_ROOT"] = emulatorRoot;
+            start.Environment.Remove(ClientModManifest.LaunchManifestEnvironmentVariable);
 
             using var client = Process.Start(start) ?? throw new SetupException("The client did not start.");
             Console.WriteLine($"[Setup] First run of the client with MelonLoader (PID {client.Id}).");

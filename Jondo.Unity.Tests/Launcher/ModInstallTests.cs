@@ -13,7 +13,7 @@ namespace Jondo.Unity.Tests.Launcher
     public class ModInstallTests : IDisposable
     {
         private readonly string _client = Path.Combine(Path.GetTempPath(), $"jondo-cliente-{Guid.NewGuid():N}");
-        private static string Shipped => Path.Combine(Paths.Root, "JondoFix", "JondoFix.dll");
+        private static string Shipped => LauncherService.ShippedModPath(Paths.Root, "JondoFix");
 
         public ModInstallTests() => Directory.CreateDirectory(_client);
 
@@ -39,7 +39,7 @@ namespace Jondo.Unity.Tests.Launcher
         [Fact]
         public void The_head_hunters_mod_goes_in_beside_it()
         {
-            string shipped = Path.Combine(Paths.Root, "Cazacabezas", "Cazacabezas.dll");
+            string shipped = LauncherService.ShippedModPath(Paths.Root, "Cazacabezas");
             if (!File.Exists(shipped)) return;
             Directory.CreateDirectory(Path.Combine(_client, "MelonLoader"));
 
@@ -51,7 +51,7 @@ namespace Jondo.Unity.Tests.Launcher
         [Fact]
         public void The_heroes_mod_goes_in_too()
         {
-            string shipped = Path.Combine(Paths.Root, "Heroes", "Heroes.dll");
+            string shipped = LauncherService.ShippedModPath(Paths.Root, "Heroes");
             if (!File.Exists(shipped)) return;
             Directory.CreateDirectory(Path.Combine(_client, "MelonLoader"));
 

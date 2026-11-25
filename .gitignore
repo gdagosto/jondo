@@ -12,8 +12,12 @@ runtimes/
 *.pdb
 *.deps.json
 *.runtimeconfig.json
-# The dlls go inside the single-file .exe; none loose.
+# App dependencies go inside the single-file executables. Client mods ship as DLLs.
 *.dll
+!/mods/JondoFix.dll
+!/mods/Cazacabezas.dll
+!/mods/Heroes.dll
+!/JondoModLoader/JondoModLoader.dll
 
 # ─── Executables ────────────────────────────────────────────────────────────
 # Publishing still copies Jondo Server.exe, Jondo Studio.exe and Jondo Emulator Launcher.exe to the

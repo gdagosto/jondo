@@ -105,6 +105,66 @@ and does not require a restart. Clear only clears the displayed log, preserving 
 logs and the read cursor. The log retains up to 4,000 rendered rows and virtualizes
 offscreen rows. Right-clicking a packet row opens the existing name-binding picker.
 
+### Client mods
+
+Place client mod DLLs in the `mods/` directory at the emulator root. In **Settings**,
+the **Client mods** card lists the configured load order. Use the arrows to move a
+DLL, **−** to remove it from the order, and **+** to add a DLL from the folder. Reopen
+Settings with no unsaved changes to discover newly added files. Save and restart to
+publish the order. Missing DLLs are marked in Settings and skipped when serving the
+list, so a DLL can be restored without losing its place.
+
+When their DLLs are available, **Heroes** and **Cazacabezas** also expose their game
+settings in the card. The Heroes switch controls hero mode on the server and the
+other controls set the hero limit and map reload behavior. Cazacabezas controls
+whether head hunts are enabled and their hunt and rest durations. The feature switches
+control gameplay and the numbered list controls which DLLs clients receive.
+
+On a headless server, edit these keys in `config/server_settings.json` and restart.
+The following is a complete JSON example for the mod settings. Keep any other
+settings you already have in the file.
+
+```json
+{
+  "ClientMods": ["JondoFix.dll", "Cazacabezas.dll", "Heroes.dll"],
+  "Heroes": {
+    "Enabled": true,
+    "MaxHeroes": 7,
+    "ReloadMapOnSwitch": false
+  },
+  "Cazacabezas": {
+    "Enabled": false,
+    "HuntWindowMinutes": 15,
+    "RestMinutes": 30
+  }
+}
+```
+
+An empty `ClientMods` array serves no client DLLs. Existing flat Heroes and
+Cazacabezas settings are read from older files and saved under the corresponding
+mod name. Custom MelonLoader DLLs can be added to the same ordered list. Their
+configuration is handled by the mods themselves. The server Settings card provides
+gameplay controls for Heroes and Cazacabezas. The server supports up to 128 available
+DLLs in the configured order, with a maximum of 128 MiB per DLL. Clients loading
+server mods need MelonLoader 0.7.3 or newer.
+
+When the launcher asks a player to approve a manifest, share its SHA-256 digest
+through a channel the player already trusts. The digest is computed over the
+raw response body from `GET /api/mods` on the server's control port (8888).
+
+#### Joining from the launcher
+
+Select the server and press **Play**. If the launcher asks for approval, compare
+the displayed fingerprint with the one supplied by the server operator. Choose
+**Trust and play** to approve that manifest for the server, or **Cancel** to stop
+the launch. A changed approved manifest requires approval again.
+
+Keep `JondoFix.dll` available and in the configured order to support the Windows
+client, including the Windows client running under Wine. It redirects the client
+to the emulator. If you manually installed a custom mod that the server now sends,
+move the manual copy out of the client's MelonLoader `Mods/` directory before
+joining. The launcher sets aside legacy copies of the bundled Jondo mods.
+
 ## Verification
 
 ```sh

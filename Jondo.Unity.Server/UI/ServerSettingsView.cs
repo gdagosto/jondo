@@ -1,11 +1,14 @@
 using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Jondo.Unity.Launcher;
 using Jondo.Unity.Launcher.UI;
 using Jondo.Unity.Server.Managers;
+using Jondo.Unity.Server.Network;
 
 namespace Jondo.Unity.Server.UI;
 
@@ -20,6 +23,10 @@ internal sealed class ServerSettingsView : UserControl
     private readonly Action _leave;
     private readonly bool _embedded;
     internal readonly ServerSettingsEditor Editor;
+    internal IReadOnlyList<string> AvailableMods { get; }
+
+    internal static string[] DiscoverMods() => ClientModCatalog.ListAvailable(Paths.ClientModsDirectory);
+
     /// <summary>How Save writes the settings: the file, unless a test gives another way.</summary>
     internal Action<ServerSettings> Write { get; set; } = settings =>
     {
@@ -45,12 +52,14 @@ internal sealed class ServerSettingsView : UserControl
     /// edits away and starts again from the file.
     /// </param>
     /// <param name="embedded">Inside the dashboard, whose page already has the title.</param>
-    internal ServerSettingsView(Language language, ServerSettings saved, ServerSettings running, Action leave, bool embedded = false)
+    internal ServerSettingsView(Language language, ServerSettings saved, ServerSettings running, Action leave,
+        bool embedded = false, IReadOnlyList<string>? availableMods = null)
     {
         _language = language;
         _leave = leave;
         _embedded = embedded;
         Editor = new(saved, running);
+        AvailableMods = availableMods ?? DiscoverMods();
         var layout = new Grid { RowDefinitions = new RowDefinitions("Auto,*,Auto") };
         if (!embedded)
         {
@@ -68,7 +77,8 @@ internal sealed class ServerSettingsView : UserControl
         var characters = Card("Characters",
             Number("MaxAp", null, s.MaxActionPoints, 0, 30, 1, "", v => s.MaxActionPoints = (int)v),
             Number("MaxMp", "CapHint", s.MaxMovementPoints, 0, 20, 1, "", v => s.MaxMovementPoints = (int)v),
-            Toggle("NoEnergy", "NoEnergyHint", s.NoEnergyLoss, v => s.NoEnergyLoss = v));
+            Toggle("NoEnergy", "NoEnergyHint", s.NoEnergyLoss, v => s.NoEnergyLoss = v),
+            Toggle("Hardcore", "HardcoreHint", s.Hardcore, v => s.Hardcore = v));
         var startingBonuses = Card("StartingBonuses",
             Number("StartingKamas", "StartingKamasHint", s.StartingKamas, 0, 1_000_000_000L, 1, "", v => s.StartingKamas = (long)v),
             Number("StartingScrollStats", "StartingScrollStatsHint", s.StartingScrollStats, 0, 10_000, 1, "", v => s.StartingScrollStats = (int)v),
@@ -84,12 +94,6 @@ internal sealed class ServerSettingsView : UserControl
         var botsMax = Number("BotsMax", "BotsMaxHint", s.SimulatedPlayersMax, 1, Bots.SimulatedPlayers.Most, 5, "", v => s.SimulatedPlayersMax = (int)v);
         var bots = Card("Bots", Toggle("BotsOn", "BotsOnHint", s.SimulatedPlayers, v => { s.SimulatedPlayers = v; botsMax.IsEnabled = v; }), botsMax);
         botsMax.IsEnabled = s.SimulatedPlayers;
-        var huntMinutes = Number("HuntMinutes", null, s.HeadHuntWindowMinutes, 1, 120, 5, "min", v => s.HeadHuntWindowMinutes = (int)v);
-        var restMinutes = Number("RestMinutes", null, s.HeadHuntRestMinutes, 0, 600, 5, "min", v => s.HeadHuntRestMinutes = (int)v);
-        void HuntersState(bool on) { huntMinutes.IsEnabled = on; restMinutes.IsEnabled = on; }
-        var hunters = Toggle("HuntersOn", "HuntersOnHint", s.HeadHunters, v => { s.HeadHunters = v; HuntersState(v); });
-        HuntersState(s.HeadHunters);
-
         var chance = Number("Chance", "ChanceHint", (decimal)Math.Clamp(double.IsFinite(s.RandomLootChancePercent) ? s.RandomLootChancePercent : 10, 0, 100),
             0, 100, 1, "%", v => s.RandomLootChancePercent = (double)v, 2);
         var rarities = Rarities();
@@ -98,19 +102,14 @@ internal sealed class ServerSettingsView : UserControl
         var loot = Toggle("RandomLoot", "RandomLootHint", s.RandomLoot, v => { s.RandomLoot = v; LootState(v); });
         LootState(s.RandomLoot);
         var lootCard = Card("Loot", loot, chance, rarities, levels);
-        var heroesMax = Number("HeroesMax", null, s.HeroesMax, 1, Managers.Heroes.Most, 1, "", v => s.HeroesMax = (int)v);
-        var heroes = Toggle("HeroMode", "HeroModeHint", s.HeroMode, v => { s.HeroMode = v; heroesMax.IsEnabled = v; });
-        heroesMax.IsEnabled = s.HeroMode;
-        var modes = Card("Modes", Toggle("Hardcore", "HardcoreHint", s.Hardcore, v => s.Hardcore = v), hunters, huntMinutes, restMinutes,
-                         heroes, heroesMax);
+        var mods = ModSettings(AvailableMods);
         var raids = Card("Raids",
             Number("RaidMin", "RaidMinHint", s.RaidMinPlayers, 0, 16, 1, "", v => s.RaidMinPlayers = (int)v),
             Number("Matchmaking", "MatchmakingHint", s.MatchmakingGroupSize, 0, 4, 1, "", v => s.MatchmakingGroupSize = (int)v));
         var world = Card("World",
             Number("CharacterSlots", "CharacterSlotsHint", s.CharacterSlots, 1, 20, 1, "", v => s.CharacterSlots = (int)v),
-            Toggle("RequireZaap", "RequireZaapHint", s.RequireZaapDiscovery, v => s.RequireZaapDiscovery = v),
-            Toggle("HeroReload", "HeroReloadHint", s.HeroSwitchReloadsMap, v => s.HeroSwitchReloadsMap = v));
-        foreach (var card in new[] { rates, lootCard, characters, modes, conquests, raids, bots, welcomeCard, startingBonuses, world })
+            Toggle("RequireZaap", "RequireZaapHint", s.RequireZaapDiscovery, v => s.RequireZaapDiscovery = v));
+        foreach (var card in new[] { rates, lootCard, characters, mods, conquests, raids, bots, welcomeCard, startingBonuses, world })
             _cards.Children.Add(card);
         var scroll = new ScrollViewer { Name = "SettingsScroll", Content = _cards, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
         scroll.SizeChanged += (_, _) =>
@@ -141,6 +140,118 @@ internal sealed class ServerSettingsView : UserControl
         }, RoutingStrategies.Bubble, handledEventsToo: true);
         _building = false;
         Changed();
+    }
+
+    private Border ModSettings(IReadOnlyList<string> available)
+    {
+        var s = Editor.Edited;
+        var comparer = StringComparer.OrdinalIgnoreCase;
+        var files = available.ToHashSet(comparer);
+        var order = new StackPanel { Spacing = 6 };
+        var details = new StackPanel { Spacing = 8 };
+
+        Expander Settings(string name, params Control[] controls)
+        {
+            var content = new StackPanel { Spacing = 12 };
+            foreach (var control in controls) content.Children.Add(control);
+            return new Expander { Header = name, Content = content, HorizontalAlignment = HorizontalAlignment.Stretch };
+        }
+
+        if (files.Contains("Heroes.dll"))
+        {
+            var heroes = s.Heroes;
+            var max = Number("HeroesMax", null, heroes.MaxHeroes, 1, Managers.Heroes.Most, 1, "", v => heroes.MaxHeroes = (int)v);
+            var reload = Toggle("HeroReload", "HeroReloadHint", heroes.ReloadMapOnSwitch, v => heroes.ReloadMapOnSwitch = v);
+            void SetEnabled(bool enabled) { heroes.Enabled = enabled; max.IsEnabled = enabled; reload.IsEnabled = enabled; }
+            var enabled = Toggle("HeroMode", "HeroModeHint", heroes.Enabled, SetEnabled);
+            SetEnabled(heroes.Enabled);
+            details.Children.Add(Settings("Heroes", enabled, max, reload));
+        }
+
+        if (files.Contains("Cazacabezas.dll"))
+        {
+            var hunters = s.Cazacabezas;
+            var hunt = Number("HuntMinutes", null, hunters.HuntWindowMinutes, 1, 120, 5, "min", v => hunters.HuntWindowMinutes = (int)v);
+            var rest = Number("RestMinutes", null, hunters.RestMinutes, 0, 600, 5, "min", v => hunters.RestMinutes = (int)v);
+            void SetEnabled(bool enabled) { hunters.Enabled = enabled; hunt.IsEnabled = enabled; rest.IsEnabled = enabled; }
+            var enabled = Toggle("HuntersOn", "HuntersOnHint", hunters.Enabled, SetEnabled);
+            SetEnabled(hunters.Enabled);
+            details.Children.Add(Settings("Cazacabezas", enabled, hunt, rest));
+        }
+
+        void Render(string? focusedFile = null, string? focusedAction = null)
+        {
+            order.Children.Clear();
+            Button? focus = null;
+            Button ActionButton(string label, string action, string file, Action click)
+            {
+                var button = ServerTheme.Button(label, click);
+                button.Padding = new Thickness(8, 4);
+                string description = $"{T(action)} {file}";
+                AutomationProperties.SetName(button, description);
+                ToolTip.SetTip(button, description);
+                if (file == focusedFile && action == focusedAction) focus = button;
+                return button;
+            }
+
+            var configured = s.ClientMods.OfType<string>().Where(file => !string.IsNullOrWhiteSpace(file)).ToArray();
+            void Edit(IEnumerable<string> next, string file, string action)
+            {
+                s.ClientMods = next.ToArray();
+                Render(file, action);
+                Changed();
+            }
+
+            void Move(int from, int to, string action)
+            {
+                if (to < 0 || to >= configured.Length) return;
+                (configured[from], configured[to]) = (configured[to], configured[from]);
+                Edit(configured, configured[to], action);
+            }
+
+            for (int i = 0; i < configured.Length; i++)
+            {
+                int index = i;
+                string file = configured[index];
+                var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+                var up = ActionButton("↑", "ModUp", file, () => Move(index, index - 1, "ModUp"));
+                var down = ActionButton("↓", "ModDown", file, () => Move(index, index + 1, "ModDown"));
+                up.IsEnabled = index > 0;
+                down.IsEnabled = index < configured.Length - 1;
+                actions.Children.Add(up);
+                actions.Children.Add(down);
+                actions.Children.Add(ActionButton("−", "ModRemove", file, () =>
+                    Edit(configured.Where((_, at) => at != index), file, "ModAdd")));
+                order.Children.Add(ModRow($"{index + 1}. {file}" + (files.Contains(file) ? "" : $" ({T("ModMissing")})"), actions));
+            }
+
+            bool canAdd = configured.Count(files.Contains) < ClientModManifest.MaxEntries;
+            foreach (string file in available.Except(configured, comparer))
+            {
+                var add = ActionButton("+", "ModAdd", file, () => Edit(configured.Append(file), file, "ModRemove"));
+                add.IsEnabled = canAdd;
+                order.Children.Add(ModRow(file, add));
+            }
+
+            if (order.Children.Count == 0) order.Children.Add(Note("NoMods"));
+            if (focus?.IsEnabled == true) focus.Focus();
+        }
+
+        Render();
+        return Card("Mods", CardHint("ModsHint"), order, details);
+    }
+
+    private static Grid ModRow(string label, Control actions)
+    {
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+        var title = ServerTheme.Text(label);
+        title.TextWrapping = TextWrapping.Wrap;
+        title.VerticalAlignment = VerticalAlignment.Center;
+        title.Margin = new Thickness(0, 0, 8, 0);
+        row.Children.Add(title);
+        Grid.SetColumn(actions, 1);
+        row.Children.Add(actions);
+        return row;
     }
 
     private TextBlock Note(string key)
@@ -201,6 +312,8 @@ internal sealed class ServerSettingsView : UserControl
             FormatString = decimals == 0 ? "0" : "0.##", Width = 114,
             NumberFormat = Culture.NumberFormat,
         };
+        // Expander contents may never apply their templates. Seed their input text from the value.
+        number.Text = number.Value.Value.ToString(Culture.NumberFormat);
         _numbers.Add(number);
         // Clamped legacy file values must agree with what is displayed and will be saved.
         set(number.Value.Value);

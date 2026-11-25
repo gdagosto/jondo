@@ -174,12 +174,23 @@ namespace Jondo.Unity.Server.Network
             // is another process and cannot call anyone through memory.
             //
             // Account tokens authorize session routes; ConRol also checks the administrator role.
+            if (path.StartsWith(ClientModManifest.Route + "/", StringComparison.Ordinal))
+            {
+                await ServeClientModAsync(path[(ClientModManifest.Route.Length + 1)..], req.HttpMethod, resp);
+                return;
+            }
+
             var deControl = ControlApi.Responder(path, req.HttpMethod, body, clientIp);
             if (deControl != null)
             {
                 byte[] cuerpo = System.Text.Encoding.UTF8.GetBytes(deControl.Value.Json);
                 resp.StatusCode = deControl.Value.Codigo;
                 resp.ContentType = "application/json; charset=utf-8";
+                if (path == ClientModManifest.Route)
+                {
+                    resp.Headers["Cache-Control"] = "no-store";
+                    if (resp.StatusCode == 405) resp.AddHeader("Allow", "GET");
+                }
                 resp.ContentLength64 = cuerpo.Length;
                 await resp.OutputStream.WriteAsync(cuerpo, 0, cuerpo.Length);
                 resp.Close();
@@ -215,6 +226,44 @@ namespace Jondo.Unity.Server.Network
             finally
             {
                 resp.OutputStream.Close();
+            }
+        }
+
+        private static async Task ServeClientModAsync(string name, string method, HttpListenerResponse response)
+        {
+            bool streaming = false;
+            try
+            {
+                if (method != "GET")
+                {
+                    response.StatusCode = 405;
+                    response.AddHeader("Allow", "GET");
+                    return;
+                }
+
+                using var file = ClientModCatalog.OpenDownload(Paths.ClientModsDirectory, ServerSettings.Current.ClientMods, name);
+                if (file == null)
+                {
+                    response.StatusCode = 404;
+                    return;
+                }
+
+                response.ContentType = "application/octet-stream";
+                response.ContentLength64 = file.Length;
+                response.Headers["Cache-Control"] = "no-store";
+                streaming = true;
+                await file.CopyToAsync(response.OutputStream);
+                streaming = false;
+            }
+            catch (Exception ex) when (ex is InvalidDataException or IOException or HttpListenerException or UnauthorizedAccessException)
+            {
+                Console.WriteLine($"[Control] Client mod download interrupted: {ex.Message}");
+                if (streaming) response.Abort();
+                else response.StatusCode = 503;
+            }
+            finally
+            {
+                if (!streaming) response.Close();
             }
         }
 

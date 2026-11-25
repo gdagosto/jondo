@@ -72,6 +72,8 @@ namespace Jondo.Unity.Server.Network
                     case Prefijo + "estado": return Estado();
                     case Prefijo + "entrar": return Entrar(cuerpo, ip);
                     case Prefijo + "crear-cuenta": return CrearCuenta(cuerpo, ip);
+                    case ClientModManifest.Route:
+                        return Mods(metodo, Paths.ClientModsDirectory, ServerSettings.Current.ClientMods);
 
                     // ─── With a session ─────────────────────────────────────────────────────
                     // A token the base recognises is needed. The role does not matter: they are things
@@ -140,6 +142,21 @@ namespace Jondo.Unity.Server.Network
             {
                 Console.WriteLine($"[Control] {ruta} ha reventado: {ex.Message}");
                 return Mal(500, ex.Message);
+            }
+        }
+
+        internal static Respuesta Mods(string metodo, string directory, IReadOnlyList<string> names)
+        {
+            if (!metodo.Equals("GET", StringComparison.OrdinalIgnoreCase)) return Mal(405, "metodo");
+
+            try
+            {
+                return Bien(ClientModCatalog.CreateManifest(directory, names));
+            }
+            catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException)
+            {
+                Console.WriteLine($"[Control] Client mod manifest unavailable: {ex.Message}");
+                return Mal(503, "mods-no-disponibles");
             }
         }
 

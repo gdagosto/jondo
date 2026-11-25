@@ -26,16 +26,20 @@ internal sealed class SettingsPage : UserControl, IServerPage
     }
 
     /// <summary>A fresh editor from the file: after Cancel or a restart started, and the first time.</summary>
-    internal void Rebuild()
+    internal void Rebuild() => Rebuild(ServerSettingsView.DiscoverMods());
+
+    private void Rebuild(IReadOnlyList<string> availableMods)
     {
-        View = new ServerSettingsView(_language, _saved(), _running(), Rebuild, embedded: true);
+        View = new ServerSettingsView(_language, _saved(), _running(), Rebuild, embedded: true, availableMods: availableMods);
         if (Write != null) View.Write = Write;
         Content = View;
     }
 
     internal void EnsureBuilt()
     {
-        if (View == null) Rebuild();
+        if (View?.Editor.Dirty == true) return;
+        var availableMods = ServerSettingsView.DiscoverMods();
+        if (View == null || !availableMods.SequenceEqual(View.AvailableMods)) Rebuild(availableMods);
     }
 
     public void ApplyLanguage(Language language)

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using Jondo.Unity.Launcher.Network;
+using Jondo.Unity.Launcher.Setup;
 
 namespace Jondo.Unity.Launcher
 {
@@ -26,6 +27,7 @@ namespace Jondo.Unity.Launcher
         {
             public bool Success { get; set; }
             public string Message { get; set; } = "";
+            public bool ModApprovalDeclined { get; init; }
         }
 
         /// <summary>Result of a successful login.</summary>
@@ -312,7 +314,7 @@ namespace Jondo.Unity.Launcher
         /// The token identifies the account that has just logged in; if it is not recognized we
         /// reject the launch instead of silently using another account.
         /// </summary>
-        public static Result LaunchClient(string? token)
+        public static Result LaunchClient(string? token, Func<string, ClientModManifest, string, bool>? approveMods = null)
         {
             if (string.IsNullOrWhiteSpace(token))
                 return new Result { Success = false, Message = UI.LauncherPreferences.Textos.SessionExpiredError };
@@ -345,6 +347,11 @@ namespace Jondo.Unity.Launcher
                         Message = UI.LauncherPreferences.Textos.ServidorSinResponder
                     };
                 }
+
+                var installation = new ClientInstallation(clientPath);
+                bool modded = installation.IsWindows
+                    ? MelonLoaderSetup.IsInstalled(installation.Root) : installation.HasLinuxMods;
+                var modPlan = ClientModSync.Prepare(UI.LauncherPreferences.ServerHost, modded, installation.IsWindows, approveMods);
 
                 // The game's language, which may be one the launcher has no texts for: the server
                 // keeps it for the Zaap's "language" setting and answers its own messages in the
@@ -391,13 +398,12 @@ namespace Jondo.Unity.Launcher
 
                     // The mods run wherever MelonLoader does: on Windows, in the Windows client
                     // through Wine, and in the native Linux client that carries it.
-                    var installation = new ClientInstallation(clientPath);
-                    bool modded = OperatingSystem.IsWindows() || WineClient.Runs(installation) || installation.HasLinuxMods;
-                    if (modded) InstallMod(clientPath);
+                    if (modded && !modPlan.UsesManifest) InstallMod(clientPath);
                     if (installation.HasLinuxMods) installation.LinkDataFolderForMelonLoader();
 
                     var startInfo = ClientStartInfo(clientPath, area.Width, area.Height, instanceId,
                         hash, language, packFlags, UI.LauncherPreferences.ClientConfigDirectory, Paths.LogsDir);
+                    ClientModSync.Activate(installation, modPlan, startInfo);
                     if (modded)
                     {
                         // The shipped mods consume these.
@@ -436,6 +442,10 @@ namespace Jondo.Unity.Launcher
                     throw;
                 }
             }
+            catch (ClientModSync.ApprovalDeclinedException)
+            {
+                return new Result { ModApprovalDeclined = true };
+            }
             catch (Exception ex)
             {
                 return new Result { Success = false, Message = $"Error starting the client: {ex.Message}" };
@@ -463,6 +473,7 @@ namespace Jondo.Unity.Launcher
             start.Environment.Remove("JONDO_CONTROL_TOKEN");
             start.Environment.Remove("JONDO_ACCOUNT_ROLE");
             start.Environment.Remove("JONDO_PLAYER_TOKEN");
+            start.Environment.Remove(ClientModManifest.LaunchManifestEnvironmentVariable);
             // The mods find the emulator's data here: an installed client is not beside the
             // emulator's folder, where JondoFix used to look for it.
             start.Environment["JONDO_EMULATOR_ROOT"] = Paths.Root;
@@ -510,8 +521,14 @@ namespace Jondo.Unity.Launcher
             return start;
         }
 
-        /// <summary>The mods the emulator ships, each in its own folder of the repository.</summary>
+        /// <summary>The mods the emulator ships, including the pre-manifest fallback.</summary>
         internal static readonly string[] ShippedMods = { "JondoFix", "Cazacabezas", "Heroes" };
+
+        internal static string ShippedModPath(string emulatorRoot, string mod)
+        {
+            string packed = Path.Combine(emulatorRoot, "mods", mod + ".dll");
+            return File.Exists(packed) ? packed : Path.Combine(emulatorRoot, mod, mod + ".dll");
+        }
 
         /// <summary>
         /// The emulator's mods into the client's Mods, each when it differs from the one there.
@@ -532,7 +549,7 @@ namespace Jondo.Unity.Launcher
             {
                 try
                 {
-                    string shipped = Path.Combine(Paths.Root, mod, mod + ".dll");
+                    string shipped = ShippedModPath(Paths.Root, mod);
                     if (!File.Exists(shipped)) continue;
 
                     string installed = Path.Combine(mods, mod + ".dll");

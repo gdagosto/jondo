@@ -107,6 +107,8 @@ namespace Jondo.Unity.Launcher.Setup
                 string mods = Path.Combine(Path.GetDirectoryName(state.Client) ?? "", "Mods");
                 foreach (string mod in LauncherService.ShippedMods)
                     TryDelete(Path.Combine(mods, mod + ".dll"));
+                string plugins = Path.Combine(Path.GetDirectoryName(state.Client) ?? "", "Plugins");
+                TryDelete(Path.Combine(plugins, ClientModManifest.BootstrapFileName));
             }
 
             foreach (string shortcut in SystemIntegration.ShortcutPaths()) TryDelete(shortcut);

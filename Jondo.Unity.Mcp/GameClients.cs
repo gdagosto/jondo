@@ -25,7 +25,7 @@ namespace Jondo.Unity.Mcp;
 /// </remarks>
 public sealed class GameClients : IDisposable
 {
-    /// <summary>The mods the emulator ships, each in its own folder of the checkout.</summary>
+    /// <summary>The mods the emulator ships with the checkout.</summary>
     private static readonly string[] ShippedMods = { "JondoFix", "Cazacabezas", "Heroes" };
 
     private readonly Emulator _emulator;
@@ -75,6 +75,7 @@ public sealed class GameClients : IDisposable
         start.Environment["JONDO_ACCOUNT_ROLE"] = role.ToString(CultureInfo.InvariantCulture);
         start.Environment["JONDO_CONTROL_TOKEN"] = token;
         start.Environment["JONDO_PLAYER_TOKEN"] = token;
+        start.Environment.Remove(ClientModManifest.LaunchManifestEnvironmentVariable);
         foreach (string argument in new[]
                  {
                      "-force-d3d11", "-screen-fullscreen", "0",
@@ -120,7 +121,8 @@ public sealed class GameClients : IDisposable
         var said = new List<string>();
         foreach (string mod in ShippedMods)
         {
-            string shipped = Path.Combine(_emulator.Source, mod, mod + ".dll");
+            string shipped = Path.Combine(_emulator.Source, "mods", mod + ".dll");
+            if (!File.Exists(shipped)) shipped = Path.Combine(_emulator.Source, mod, mod + ".dll");
             if (!File.Exists(shipped)) continue;
             string installed = Path.Combine(mods, mod + ".dll");
             string aside = installed + ".old";

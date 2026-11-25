@@ -13,12 +13,12 @@ internal sealed class ServerSettingsWindow : Window
     internal ServerSettingsWindow(Language language) : this(language, ServerSettings.Load(), ServerSettings.Current) { }
 
     // The second constructor permits desktop tests without touching the real settings/database.
-    internal ServerSettingsWindow(Language language, ServerSettings saved, ServerSettings running)
+    internal ServerSettingsWindow(Language language, ServerSettings saved, ServerSettings running, IReadOnlyList<string>? availableMods = null)
     {
         Title = ServerSettingsTexts.Get(language, "Caption"); Width = 1000; Height = 800; MinWidth = 360; MinHeight = 420;
         ShowInTaskbar = false; WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ServerTheme.Window(this);
-        View = new ServerSettingsView(language, saved, running, Close);
+        View = new ServerSettingsView(language, saved, running, Close, availableMods: availableMods);
         Content = View;
         Opened += (_, _) =>
         {

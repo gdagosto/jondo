@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Jondo.Unity.Launcher;
 
 namespace Jondo.Unity.Server
@@ -99,32 +100,32 @@ namespace Jondo.Unity.Server
         /// <summary>The most simulated players in the world at once; how many are in varies under it.</summary>
         public int SimulatedPlayersMax { get; set; } = 20;
 
-        /// <summary>
-        /// The Cazacabezas, the head hunters (<see cref="Managers.HeadHunts"/>): orders on the other
-        /// city's players, hunts while they are in the world, and chapeuvepés for their heads.
-        /// </summary>
-        public bool HeadHunters { get; set; }
+        /// <summary>Client mods to serve, in their configured load order.</summary>
+        public string[] ClientMods { get; set; } = ["JondoFix.dll", "Cazacabezas.dll", "Heroes.dll"];
 
-        /// <summary>How long a hunt lasts once the prey is in the world, in minutes.</summary>
-        public int HeadHuntWindowMinutes { get; set; } = 15;
+        public HeroesModSettings Heroes { get; set; } = new();
+        public CazacabezasModSettings Cazacabezas { get; set; } = new();
 
-        /// <summary>The prey's respite between two hunts, in minutes.</summary>
-        public int HeadHuntRestMinutes { get; set; } = 30;
+        public sealed record HeroesModSettings
+        {
+            public bool Enabled { get; set; } = true;
+            public int MaxHeroes { get; set; } = 7;
+            public bool ReloadMapOnSwitch { get; set; }
+        }
 
-        /// <summary>
-        /// The hero mode (<see cref="Managers.Heroes"/>): the other characters of one's account
-        /// connected beside one's own, fighting at one's side and played by hand in their turns.
-        /// </summary>
-        public bool HeroMode { get; set; } = true;
+        public sealed record CazacabezasModSettings
+        {
+            public bool Enabled { get; set; }
+            public int HuntWindowMinutes { get; set; } = 15;
+            public int RestMinutes { get; set; } = 30;
+        }
 
-        /// <summary>
-        /// Whether taking a hero in hand loads the map again in the client (Network.HeroSwitch).
-        /// Off, only the map's actors are told anew: quicker. Set in the file.
-        /// </summary>
-        public bool HeroSwitchReloadsMap { get; set; }
-
-        /// <summary>How many heroes a character may have connected at once, himself not counted.</summary>
-        public int HeroesMax { get; set; } = 7;
+        [JsonIgnore] public bool HeroMode { get => Heroes.Enabled; set => Heroes.Enabled = value; }
+        [JsonIgnore] public int HeroesMax { get => Heroes.MaxHeroes; set => Heroes.MaxHeroes = value; }
+        [JsonIgnore] public bool HeroSwitchReloadsMap { get => Heroes.ReloadMapOnSwitch; set => Heroes.ReloadMapOnSwitch = value; }
+        [JsonIgnore] public bool HeadHunters { get => Cazacabezas.Enabled; set => Cazacabezas.Enabled = value; }
+        [JsonIgnore] public int HeadHuntWindowMinutes { get => Cazacabezas.HuntWindowMinutes; set => Cazacabezas.HuntWindowMinutes = value; }
+        [JsonIgnore] public int HeadHuntRestMinutes { get => Cazacabezas.RestMinutes; set => Cazacabezas.RestMinutes = value; }
 
         /// <summary>
         /// How many characters an account may have per category of server: the server list's
@@ -169,7 +170,7 @@ namespace Jondo.Unity.Server
             {
                 string file = Paths.ServerSettingsFile;
                 if (!File.Exists(file)) return new ServerSettings();
-                return JsonSerializer.Deserialize<ServerSettings>(File.ReadAllText(file), Json) ?? new ServerSettings();
+                return Read(File.ReadAllText(file));
             }
             catch (Exception ex)
             {
@@ -178,16 +179,75 @@ namespace Jondo.Unity.Server
             }
         }
 
+        internal static ServerSettings Read(string json)
+        {
+            using var doc = JsonDocument.Parse(json);
+            var settings = doc.RootElement.Deserialize<ServerSettings>(Json) ?? new ServerSettings();
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return settings;
+
+            settings.ClientMods ??= new ServerSettings().ClientMods;
+            var keys = doc.RootElement.EnumerateObject().Select(property => property.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            bool migrateHeroes = settings.Heroes == null || !keys.Contains(nameof(Heroes));
+            bool migrateCazacabezas = settings.Cazacabezas == null || !keys.Contains(nameof(Cazacabezas));
+            if (!migrateHeroes && !migrateCazacabezas) return settings;
+
+            var legacy = doc.RootElement.Deserialize<LegacyModSettings>(Json)!;
+            if (migrateHeroes)
+            {
+                var heroes = new HeroesModSettings();
+                heroes.Enabled = legacy.HeroMode ?? heroes.Enabled;
+                heroes.MaxHeroes = legacy.HeroesMax ?? heroes.MaxHeroes;
+                heroes.ReloadMapOnSwitch = legacy.HeroSwitchReloadsMap ?? heroes.ReloadMapOnSwitch;
+                settings.Heroes = heroes;
+            }
+            if (migrateCazacabezas)
+            {
+                var cazacabezas = new CazacabezasModSettings();
+                cazacabezas.Enabled = legacy.HeadHunters ?? cazacabezas.Enabled;
+                cazacabezas.HuntWindowMinutes = legacy.HeadHuntWindowMinutes ?? cazacabezas.HuntWindowMinutes;
+                cazacabezas.RestMinutes = legacy.HeadHuntRestMinutes ?? cazacabezas.RestMinutes;
+                settings.Cazacabezas = cazacabezas;
+            }
+            return settings;
+        }
+
+        private sealed class LegacyModSettings
+        {
+            public LegacyModSettings() { }
+            public bool? HeroMode { get; set; }
+            public int? HeroesMax { get; set; }
+            public bool? HeroSwitchReloadsMap { get; set; }
+            public bool? HeadHunters { get; set; }
+            public int? HeadHuntWindowMinutes { get; set; }
+            public int? HeadHuntRestMinutes { get; set; }
+        }
+
         /// <summary>Writes these settings to the file, for the next start.</summary>
         public void Save()
         {
             string file = Paths.ServerSettingsFile;
             Directory.CreateDirectory(Path.GetDirectoryName(file)!);
-            File.WriteAllText(file, JsonSerializer.Serialize(this, Json));
+            string pending = file + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                File.WriteAllText(pending, JsonSerializer.Serialize(this, Json));
+                File.Move(pending, file, overwrite: true);
+            }
+            finally
+            {
+                File.Delete(pending);
+            }
         }
 
         /// <summary>A copy, for the window to edit.</summary>
-        public ServerSettings Copy() => (ServerSettings)MemberwiseClone();
+        public ServerSettings Copy()
+        {
+            var copy = (ServerSettings)MemberwiseClone();
+            copy.ClientMods = (string[])ClientMods.Clone();
+            copy.Heroes = Heroes with { };
+            copy.Cazacabezas = Cazacabezas with { };
+            return copy;
+        }
 
         /// <summary>Whether two settings differ in anything that needs a restart.</summary>
         public bool DiffersFrom(ServerSettings other)
