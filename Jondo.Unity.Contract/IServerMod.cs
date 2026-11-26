@@ -9,6 +9,9 @@ public interface IServerMod
 {
     void Initialize(IServerModHost host);
 
+    /// <summary>Starts gameplay work after the host has brought its services online.</summary>
+    void StartGameplay() { }
+
     /// <summary>Stops a successfully initialized mod while the server is still running.</summary>
     void Shutdown() { }
 }

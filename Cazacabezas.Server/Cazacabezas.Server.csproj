@@ -6,11 +6,16 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Jondo.Unity.Tests" />
     <ProjectReference Include="..\Jondo.Unity.Contract\Jondo.Unity.Contract.csproj" Private="false" />
   </ItemGroup>
 
   <Target Name="StageServerMod" AfterTargets="Build" Condition="'$(StageServerMod)' == 'true'">
-    <Copy SourceFiles="$(TargetPath);$(MSBuildProjectDirectory)/manifest.json"
-          DestinationFolder="$(MSBuildProjectDirectory)/../server-mods/cazacabezas" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(TargetPath);$(MSBuildProjectDirectory)/manifest.json;$(MSBuildProjectDirectory)/../mods/Cazacabezas.dll"
+          DestinationFolder="$(CazacabezasPackageDirectory)" SkipUnchangedFiles="true" />
   </Target>
+
+  <PropertyGroup>
+    <CazacabezasPackageDirectory Condition="'$(CazacabezasPackageDirectory)' == ''">$(MSBuildProjectDirectory)/../server-mods/cazacabezas</CazacabezasPackageDirectory>
+  </PropertyGroup>
 </Project>

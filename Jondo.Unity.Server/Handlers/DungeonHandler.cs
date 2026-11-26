@@ -5,7 +5,9 @@ using System.Net.Sockets;
 using System.Threading.Tasks;
 using Jondo.Unity.Protocol;
 using Jondo.Unity.Server.Managers;
+using Jondo.Unity.Server.Mods;
 using Jondo.Unity.Server.Network;
+using Jondo.Unity.ServerMods;
 
 namespace Jondo.Unity.Server.Handlers
 {
@@ -148,7 +150,7 @@ namespace Jondo.Unity.Server.Handlers
             if (dungeon == null || dungeon.FirstRoom == 0) return false;
             // Before the key is spent.
             if (await Managers.Jail.KeepsInAsync(stream)) return false;
-            if (await Managers.HeadHunts.HoldsAsync(stream, Managers.HeadHunts.Hold.Dungeon)) return false;
+            if (await HuntGameplay.HoldsAsync(stream, HuntActivity.Dungeon)) return false;
 
             var state = SessionContext.State;
 
@@ -294,7 +296,7 @@ namespace Jondo.Unity.Server.Handlers
 
             long room = ResumeRoom(dungeon, state.CharacterId);
             if (room == 0) return true;
-            if (await Jail.KeepsInAsync(stream) || await HeadHunts.HoldsAsync(stream, HeadHunts.Hold.Dungeon))
+            if (await Jail.KeepsInAsync(stream) || await HuntGameplay.HoldsAsync(stream, HuntActivity.Dungeon))
                 return true;
             if (dungeon.MinLevel > state.CharacterLevel)
             {
@@ -393,7 +395,7 @@ namespace Jondo.Unity.Server.Handlers
         {
             var state = SessionContext.State;
             if (dungeon.FirstRoom == 0) return false;
-            if (await HeadHunts.HoldsAsync(stream, HeadHunts.Hold.Dungeon)) return false;
+            if (await HuntGameplay.HoldsAsync(stream, HuntActivity.Dungeon)) return false;
             if (dungeon.MinLevel > 0 && state.CharacterLevel < dungeon.MinLevel)
             {
                 Console.WriteLine($"[Dungeon] {dungeon.Name}: needs level {dungeon.MinLevel} and has {state.CharacterLevel}.");

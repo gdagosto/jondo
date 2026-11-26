@@ -423,7 +423,7 @@ namespace Jondo.Unity.World.Content
         public IReadOnlyList<int> GivesOneOf { get; init; } = Array.Empty<int>();
 
         /// <summary>
-        /// The chapeuvepés this reply costs (Managers.HeadHunts), or zero: Ema and Tomás Sacre's
+        /// The chapeuvepés this reply costs, or zero: Ema and Tomás Sacre's
         /// trades, «Tomar una gema que contiene el alma del Escarajefe Dorado a cambio de 8
         /// chapeuvepés.». It hands over <see cref="Trades"/>, <see cref="TradeCount"/> of them.
         /// </summary>

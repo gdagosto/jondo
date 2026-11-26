@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jondo.Unity.Protocol;
 using Jondo.Unity.Server.Managers;
+using Jondo.Unity.Server.Mods;
 using Jondo.Unity.Server.Network;
 
 namespace Jondo.Unity.Server.Bots
@@ -201,19 +202,13 @@ namespace Jondo.Unity.Server.Bots
         /// </summary>
         private async Task TakeAnOrderAsync(GameSession session)
         {
-            if (!HeadHunts.On || HeadHunts.OrderOf(_characterId) != null
-                || HeadHunts.CannotHunt(_characterId, session.State.CharacterLevel) != null
-                || !session.IsInWorld || !session.HasCharacter) return;
+            var hunts = HuntGameplay.Current;
+            if (hunts == null) return;
             try
             {
-                var online = HeadHunts.CandidatesFor(session.State.CharacterId, session.State.CharacterLevel)
-                    .Where(p => p.Online && p.Hunters < HeadHunts.HuntersPerTarget)
-                    .ToList();
-                if (online.Count == 0) return;
-
-                long target = online[_dice.Next(online.Count)].Id;
                 using var context = SessionContext.Push(session);
-                if (await HeadHunts.TakeAsync(session.State.CharacterId, session.State.CharacterLevel, target) == "ok")
+                if (await hunts.TryTakeOnlineOrderAsync(_characterId, session.State.CharacterLevel,
+                    session.IsInWorld && session.HasCharacter, _dice.Next))
                     Console.WriteLine($"[Bots] {_name} takes a head hunter's order.");
             }
             catch (Exception ex)
@@ -228,9 +223,8 @@ namespace Jondo.Unity.Server.Bots
         /// </summary>
         private async Task<bool> HuntAsync(GameSession session, CancellationToken stop)
         {
-            var order = HeadHunts.OrderOf(_characterId);
-            if (order == null || !order.Open(HeadHunts.Clock())) return false;
-            var prey = SessionRegistry.FindByCharacter(order.Target);
+            if (HuntGameplay.Current?.OpenTarget(_characterId) is not { } target) return false;
+            var prey = SessionRegistry.FindByCharacter(target);
             if (prey == null || !prey.IsInWorld || prey.State.IsInFight) return false;
             if (prey.MapId == session.State.MapId) return await AggressAsync(session, stop, prey.CharacterId);
 

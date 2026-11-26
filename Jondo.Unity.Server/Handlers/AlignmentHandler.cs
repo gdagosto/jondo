@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Threading.Tasks;
 using Jondo.Unity.Protocol;
 using Jondo.Unity.Server.Managers;
+using Jondo.Unity.Server.Mods;
 using Jondo.Unity.Server.Network;
 
 namespace Jondo.Unity.Server.Handlers
@@ -37,6 +38,7 @@ namespace Jondo.Unity.Server.Handlers
     public static class AlignmentHandler
     {
         public const int Chantal = 5064, Morry = 7658;
+        private const int CannotHideWhileHunted = 317;
 
         // Chantal Inea's sentences and replies.
         private const long SwearIntro = 36023, ConfirmBonta = 36024, ConfirmBrakmar = 36025;
@@ -141,7 +143,7 @@ namespace Jondo.Unity.Server.Handlers
             }
 
             Alignments.Set(Me, side, Now);
-            HeadHunts.Forget(Me);
+            HuntGameplay.Current?.AlignmentChanged(Me);
             await SlotLookHandler.RedrawAsync(stream);
             await CharacteristicsMessages.Live.SendAsync(SessionContext.Current);
             await WriteAsync(stream, ConnectionProtocol.Push(Op.Hod, BuildRank(Alignments.Rank())));
@@ -167,10 +169,10 @@ namespace Jondo.Unity.Server.Handlers
             bool on = ProtoMessage.Parse(hnu).Fields.Any(f => f.FieldNumber == 1 && f.WireType == 0 && f.VarIntValue != 0);
             // A prey whose hunt is open cannot fold his wings: «No puedes ocultar tu alineamiento en
             // una zona de agresión», and the sheet puts the switch back on.
-            if (!on && HeadHunts.HuntedNow(Me))
+            if (!on && HuntGameplay.HuntedNow(Me))
             {
                 await WriteAsync(stream, ConnectionProtocol.Push(Op.Lqn,
-                    ConnectionProtocol.BuildInfoMessage(InfoMessages.Warning, HeadHunts.CannotHide)));
+                    ConnectionProtocol.BuildInfoMessage(InfoMessages.Warning, CannotHideWhileHunted)));
                 await CharacteristicsMessages.Live.SendAsync(SessionContext.Current);
                 return;
             }

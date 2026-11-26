@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 using Jondo.Unity.Server.Managers;
+using Jondo.Unity.Server.Mods;
 using Jondo.Unity.Server.Network;
 using Jondo.Unity.Protocol;
 using Game = Jondo.Unity.Protocol.Game;
@@ -1994,7 +1995,8 @@ namespace Jondo.Unity.Server.Handlers
             // that says so.
             if (elegida.Chapeuvepes > 0)
             {
-                if (!Managers.HeadHunts.Pay(GameState.CharacterId, -elegida.Chapeuvepes))
+                var hunts = HuntGameplay.Current;
+                if (hunts?.Pay(GameState.CharacterId, -elegida.Chapeuvepes) != true)
                 {
                     next = elegida.RefusedNext;
                     if (next == 0) return false;
@@ -2003,7 +2005,7 @@ namespace Jondo.Unity.Server.Handlers
                 {
                     if (!await Managers.Equipment.GiveAsync(stream, elegida.Trades, elegida.TradeCount))
                     {
-                        Managers.HeadHunts.Pay(GameState.CharacterId, elegida.Chapeuvepes);
+                        hunts.Pay(GameState.CharacterId, elegida.Chapeuvepes);
                         Console.WriteLine($"[NPC] {elegida.TradeCount}x{elegida.Trades} could not be handed over; " +
                                           $"the {elegida.Chapeuvepes} chapeuvepés are given back.");
                     }

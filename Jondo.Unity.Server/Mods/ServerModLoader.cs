@@ -47,6 +47,12 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
             host.Stop();
     }
 
+    internal void StartGameplay()
+    {
+        foreach (var host in _started.Reverse())
+            host.Mod.StartGameplay();
+    }
+
     private static ILookup<string, (string Directory, JsonElement Manifest)> Discover(
         string directory, string firstEnabledId, Action<string> log)
     {
@@ -197,7 +203,7 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
         [property: JsonPropertyName("clientAsset")] string ClientAsset);
 
     private sealed class Host(Action<string> log, string label, ServerModControlRoutes controlRoutes)
-        : IServerModHost, ICazacabezasHost
+        : IServerModHost, IHuntModHost
     {
         private readonly Stack<Action> _cleanup = new();
         private bool _stopping;
@@ -216,7 +222,16 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
             }
         }
 
-        ICazacabezasHunter? ICazacabezasHost.FindHunter(long accountId) => CazacabezasHunter.Find(accountId);
+        IHuntWorld IHuntModHost.World { get; } = new HuntWorld();
+
+        void IHuntModHost.RegisterHuntGameplay(IHuntGameplay gameplay)
+        {
+            lock (_cleanup)
+            {
+                if (_stopping) throw new InvalidOperationException("The server mod is stopping.");
+                _cleanup.Push(HuntGameplay.Register(gameplay));
+            }
+        }
 
         public void RegisterCleanup(Action cleanup)
         {

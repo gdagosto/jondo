@@ -7,30 +7,54 @@ namespace Cazacabezas.Server;
 
 public sealed class CazacabezasMod : IServerMod
 {
+    private static readonly TimeSpan TickInterval = TimeSpan.FromSeconds(5);
+    private Timer? _timer;
+    private int _ticking;
+
     public void Initialize(IServerModHost host)
     {
-        var hunts = (ICazacabezasHost)host;
-        Register("status", (hunter, _) => new(200, hunter.StatusJson()));
-        Register("board", (hunter, _) => new(200, hunter.BoardJson()));
-        Register("take", Take);
-        Register("abandon", (hunter, _) => hunter.Abandon()
+        var runtime = (IHuntModHost)host;
+        var world = runtime.World;
+        var hunts = new HeadHunts(world);
+        var responses = new HuntResponses(world, hunts);
+        Register("status", (hunter, _) => new(200, responses.StatusJson(hunter)));
+        Register("board", (hunter, _) => new(200, responses.BoardJson(hunter)));
+        Register("take", (hunter, body) => Take(hunts, hunter, body));
+        Register("abandon", (hunter, _) => hunts.Abandon(hunter.Id)
             ? new(200, """{"abandoned":true}""")
             : Conflict("none"));
+        runtime.RegisterHuntGameplay(hunts);
+        host.RegisterCleanup(Shutdown);
+        _timer = new Timer(_ =>
+        {
+            if (Interlocked.Exchange(ref _ticking, 1) != 0) return;
+            try { hunts.TickAsync().GetAwaiter().GetResult(); }
+            catch (Exception ex) { host.Log($"The hunt clock failed: {ex.Message}"); }
+            finally { Interlocked.Exchange(ref _ticking, 0); }
+        }, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
 
-        void Register(string name, Func<ICazacabezasHunter, string, ServerModControlResponse> handle)
+        void Register(string name, Func<SelectedHunter, string, ServerModControlResponse> handle)
         {
             host.RegisterAuthenticatedControlRoute(Contract.Prefijo + "headhunts/" + name, request =>
             {
-                var hunter = hunts.FindHunter(request.AccountId);
+                var hunter = world.FindSelectedCharacter(request.AccountId);
                 return hunter == null ? Conflict("world") : handle(hunter, request.Body);
             });
         }
     }
 
-    private static ServerModControlResponse Take(ICazacabezasHunter hunter, string body)
+    public void StartGameplay() => _timer?.Change(TickInterval, TickInterval);
+
+    public void Shutdown()
+    {
+        var timer = Interlocked.Exchange(ref _timer, null);
+        if (timer != null) timer.DisposeAsync().GetAwaiter().GetResult();
+    }
+
+    private static ServerModControlResponse Take(HeadHunts hunts, SelectedHunter hunter, string body)
     {
         long target = ReadTarget(body);
-        string result = hunter.Take(target);
+        string result = hunts.TakeAsync(hunter.Id, hunter.Level, target).GetAwaiter().GetResult();
         return result == "ok"
             ? new(200, new JsonObject { ["taken"] = target }.ToJsonString())
             : Conflict(result);

@@ -21,7 +21,7 @@
     <ProjectReference Include="..\Jondo.Unity.World\Jondo.Unity.World.csproj" />
     <ProjectReference Include="..\Jondo.Unity.Server\Jondo.Unity.Server.csproj" />
     <ProjectReference Include="..\Cazacabezas.Server\Cazacabezas.Server.csproj"
-                      ReferenceOutputAssembly="false" OutputItemType="CazacabezasServerMod" />
+                      OutputItemType="CazacabezasServerMod" />
     <!-- The editor, for the parts of it that are not user interface. The frame decoder and
          the packet observations are ordinary logic that happens to live in a GUI project,
          and they are exactly the kind of code that is wrong in ways looking at a window
@@ -33,7 +33,7 @@
   </ItemGroup>
 
   <Target Name="CopyCazacabezasServerMod" AfterTargets="Build" Condition="'@(CazacabezasServerMod)' != ''">
-    <Copy SourceFiles="@(CazacabezasServerMod);../Cazacabezas.Server/manifest.json"
+    <Copy SourceFiles="@(CazacabezasServerMod);../Cazacabezas.Server/manifest.json;../mods/Cazacabezas.dll"
           DestinationFolder="$(TargetDir)ServerModFixtures/cazacabezas" SkipUnchangedFiles="true" />
   </Target>
 

@@ -342,16 +342,7 @@ namespace Jondo.Unity.Server
             // ports just opened, as clients do (Bots.SimulatedPlayers).
             Bots.SimulatedPlayers.Start(ServerSettings.Current);
 
-            // The head hunters' clock: hunts opening and closing, the prey sighted (HeadHunts).
-            await using var headHunts = new System.Threading.Timer(
-                _ =>
-                {
-                    if (Interlocked.Exchange(ref _headHuntsTicking, 1) != 0) return;
-                    try { Managers.HeadHunts.TickAsync().GetAwaiter().GetResult(); }
-                    catch (Exception ex) { Console.WriteLine($"[Head hunts] The clock failed: {ex.Message}"); }
-                    finally { Interlocked.Exchange(ref _headHuntsTicking, 0); }
-                },
-                null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+            mods.StartGameplay();
 
             await using var monsterWalks = new System.Threading.Timer(
                 _ =>
@@ -401,7 +392,6 @@ namespace Jondo.Unity.Server
         /// </summary>
         private static int _koliseoTicking;
         private static int _conquestTicking;
-        private static int _headHuntsTicking;
         private static int _mobRoamingTicking;
 
         /// <summary>The argument a restarted run gets: the process id of the run it replaces.</summary>

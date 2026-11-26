@@ -6,14 +6,17 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Cazacabezas.Server;
 using Jondo.Unity.Protocol;
 using Jondo.Unity.Server;
 using Jondo.Unity.Server.Handlers;
 using Jondo.Unity.Server.Managers;
 using Jondo.Unity.Server.Mods;
 using Jondo.Unity.Server.Network;
+using Jondo.Unity.ServerMods;
 using Jondo.Unity.Tests.Economy;
 using Jondo.Unity.World.Fights;
+using Microsoft.Data.Sqlite;
 using Xunit;
 
 namespace Jondo.Unity.Tests.World
@@ -43,49 +46,50 @@ namespace Jondo.Unity.Tests.World
 
         private static FightInstance Aggression(long blue, int blueLevel, long red, int redLevel)
         {
-            var fight = new FightInstance(980_001, Map);
+            var fight = new FightInstance(980_001, Map) { Reglas = FightRules.Agresion };
             fight.Azul.Add(new Fighter { Id = blue, Level = blueLevel, MaxHP = 100, CurrentHP = 100 });
             fight.Rojo.Add(new Fighter { Id = red, Level = redLevel, MaxHP = 100, CurrentHP = 0 });
             return fight;
         }
 
-        private static async Task WithHunt(Func<long, long, ClientPipe, ClientPipe, Task> test, string tag)
+        private static async Task WithHunt(Func<HeadHunts, long, long, ClientPipe, ClientPipe, Task> test, string tag)
         {
             ServerSettings.UseForTests(new ServerSettings { HeadHunters = true, HeadHuntWindowMinutes = 15, HeadHuntRestMinutes = 30 });
-            HeadHunts.Reset();
+            var hunts = new HeadHunts(new HuntWorld());
+            var unregister = HuntGameplay.Register(hunts);
             long hunter = Create(HunterAccount, "Cazador-" + tag, 100);
             long prey = Create(PreyAccount, "Presa-" + tag, 110);
             try
             {
                 // Ids come back after a character is deleted: nothing of an earlier one's hunts stays.
-                HeadHunts.Erase(hunter);
-                HeadHunts.Erase(prey);
+                hunts.CharacterDeleted(hunter);
+                hunts.CharacterDeleted(prey);
                 Sworn(hunter, Alignments.Bonta);
                 Sworn(prey, Alignments.Brakmar);
                 await using var h = await ClientPipe.OpenAsync(HunterAccount, hunter, Map, "Cazador-" + tag);
                 h.Session.State.CharacterLevel = 100;
 
-                var board = HeadHunts.CandidatesFor(hunter, 100);
+                var board = hunts.CandidatesFor(hunter, 100);
                 Assert.Contains(board, c => c.Id == prey && !c.Online);
-                Assert.Equal("ok", await HeadHunts.TakeAsync(hunter, 100, prey));
-                Assert.Equal("busy", await HeadHunts.TakeAsync(hunter, 100, prey));
+                Assert.Equal("ok", await hunts.TakeAsync(hunter, 100, prey));
+                Assert.Equal("busy", await hunts.TakeAsync(hunter, 100, prey));
 
                 // The prey is not in the world: no hunt.
-                await HeadHunts.TickAsync();
-                Assert.False(HeadHunts.HuntedNow(prey));
+                await hunts.TickAsync();
+                Assert.False(hunts.HuntedNow(prey));
 
                 await using var p = await ClientPipe.OpenAsync(PreyAccount, prey, Map, "Presa-" + tag);
                 p.Session.State.CharacterLevel = 110;
-                await HeadHunts.TickAsync();
-                Assert.True(HeadHunts.HuntedNow(prey));
+                await hunts.TickAsync();
+                Assert.True(hunts.HuntedNow(prey));
 
-                await test(hunter, prey, h, p);
+                await test(hunts, hunter, prey, h, p);
             }
             finally
             {
-                HeadHunts.Erase(hunter);
-                HeadHunts.Erase(prey);
-                HeadHunts.Reset();
+                hunts.CharacterDeleted(hunter);
+                hunts.CharacterDeleted(prey);
+                unregister();
                 ServerSettings.UseForTests(new ServerSettings());
                 DatabaseManager.DeleteCharacter(hunter, HunterAccount);
                 DatabaseManager.DeleteCharacter(prey, PreyAccount);
@@ -96,33 +100,33 @@ namespace Jondo.Unity.Tests.World
 
         [Fact]
         public Task The_hunter_who_beats_his_prey_collects_the_bounty()
-            => WithHunt(async (hunter, prey, h, p) =>
+            => WithHunt(async (hunts, hunter, prey, h, p) =>
             {
                 // While the hunt is open the prey cannot fold his wings.
                 using (SessionContext.Push(p.Session))
-                    await AlignmentHandler.PvpAsync(p.ToClient, ConnectionProtocol.Push("hnu"));
+                    await AlignmentHandler.PvpAsync(p.ToClient, ConnectionProtocol.Push("hnu", Array.Empty<byte>()));
                 Assert.True(Alignments.Of(prey).PvpOn);
 
-                int bounty = HeadHunts.Bounty(prey, 110, 100);
-                await HeadHunts.AggressionEndedAsync(Aggression(hunter, 100, prey, 110), attackersWon: true);
+                int bounty = hunts.Bounty(prey, 110, 100);
+                await AlignmentWar.AnnounceAsync(Aggression(hunter, 100, prey, 110), attackersWon: true);
 
-                Assert.Equal(bounty, HeadHunts.Of(hunter).Chapeuvepes);
-                Assert.Equal(1, HeadHunts.Of(hunter).Kills);
-                Assert.Null(HeadHunts.OrderOf(hunter));
-                Assert.False(HeadHunts.HuntedNow(prey));
+                Assert.Equal(bounty, hunts.Of(hunter).Chapeuvepes);
+                Assert.Equal(1, hunts.Of(hunter).Kills);
+                Assert.Null(hunts.OrderOf(hunter));
+                Assert.False(hunts.HuntedNow(prey));
                 Assert.Equal(HeadHunts.KillHonour, Alignments.Of(hunter).Honour);
             }, "A");
 
         [Fact]
         public Task The_prey_who_beats_his_hunter_is_paid_and_the_hunter_waits()
-            => WithHunt(async (hunter, prey, h, p) =>
+            => WithHunt(async (hunts, hunter, prey, h, p) =>
             {
-                await HeadHunts.AggressionEndedAsync(Aggression(hunter, 100, prey, 110), attackersWon: false);
+                await AlignmentWar.AnnounceAsync(Aggression(hunter, 100, prey, 110), attackersWon: false);
 
-                Assert.Equal(HeadHunts.SurvivalPay, HeadHunts.Of(prey).Chapeuvepes);
-                Assert.Equal(1, HeadHunts.Of(prey).Survivals);
-                Assert.Null(HeadHunts.OrderOf(hunter));
-                Assert.Equal("locked", HeadHunts.CannotHunt(hunter, 100));
+                Assert.Equal(HeadHunts.SurvivalPay, hunts.Of(prey).Chapeuvepes);
+                Assert.Equal(1, hunts.Of(prey).Survivals);
+                Assert.Null(hunts.OrderOf(hunter));
+                Assert.Equal("locked", hunts.CannotHunt(hunter, 100));
             }, "B");
 
         /// <summary>
@@ -131,63 +135,62 @@ namespace Jondo.Unity.Tests.World
         /// </summary>
         [Fact]
         public Task The_prey_is_held_out_in_the_open_while_the_hunt_lasts()
-            => WithHunt(async (hunter, prey, h, p) =>
+            => WithHunt(async (hunts, hunter, prey, h, p) =>
             {
                 const long Somebody = 8_980_000_099;
                 using (SessionContext.Push(p.Session))
                 {
-                    foreach (var hold in Enum.GetValues<HeadHunts.Hold>())
-                        Assert.True(await HeadHunts.HoldsAsync(p.ToClient, hold));
-                    Assert.False(await HeadHunts.RefusesFightAsync(p.ToClient, prey, hunter));
-                    Assert.True(await HeadHunts.RefusesFightAsync(p.ToClient, prey, Somebody));
+                    foreach (var hold in Enum.GetValues<HuntActivity>())
+                        Assert.True(await HuntGameplay.HoldsAsync(p.ToClient, hold));
+                    Assert.False(await HuntGameplay.RefusesFightAsync(p.ToClient, prey, hunter));
+                    Assert.True(await HuntGameplay.RefusesFightAsync(p.ToClient, prey, Somebody));
                 }
                 using (SessionContext.Push(h.Session))
                 {
                     // The hunter himself goes where he likes; and nobody else takes his prey.
-                    Assert.False(await HeadHunts.HoldsAsync(h.ToClient, HeadHunts.Hold.Dungeon));
-                    Assert.False(await HeadHunts.RefusesFightAsync(h.ToClient, hunter, prey));
+                    Assert.False(await HuntGameplay.HoldsAsync(h.ToClient, HuntActivity.Dungeon));
+                    Assert.False(await HuntGameplay.RefusesFightAsync(h.ToClient, hunter, prey));
                 }
-                Assert.False(HeadHunts.MayFight(Somebody, prey));
-                Assert.True(HeadHunts.MayFight(Somebody, hunter));
+                Assert.False(hunts.MayFight(Somebody, prey));
+                Assert.True(hunts.MayFight(Somebody, hunter));
 
                 // The hunt over, the prey is free again.
-                await HeadHunts.AggressionEndedAsync(Aggression(hunter, 100, prey, 110), attackersWon: false);
+                await AlignmentWar.AnnounceAsync(Aggression(hunter, 100, prey, 110), attackersWon: false);
                 using (SessionContext.Push(p.Session))
-                    Assert.False(await HeadHunts.HoldsAsync(p.ToClient, HeadHunts.Hold.Koliseo));
+                    Assert.False(await HuntGameplay.HoldsAsync(p.ToClient, HuntActivity.Koliseo));
             }, "D");
 
         [Fact]
         public Task The_hunt_closes_when_its_time_is_up_and_the_prey_rests()
-            => WithHunt(async (hunter, prey, h, p) =>
+            => WithHunt(async (hunts, hunter, prey, h, p) =>
             {
-                var clock = HeadHunts.Clock;
+                var clock = hunts.Clock;
                 try
                 {
                     long start = clock();
-                    HeadHunts.Clock = () => start + (long)TimeSpan.FromMinutes(16).TotalMilliseconds;
-                    await HeadHunts.TickAsync();
-                    Assert.False(HeadHunts.HuntedNow(prey));
+                    hunts.Clock = () => start + (long)TimeSpan.FromMinutes(16).TotalMilliseconds;
+                    await hunts.TickAsync();
+                    Assert.False(hunts.HuntedNow(prey));
 
                     // Within the respite nothing opens; past it, the hunt is on again.
-                    HeadHunts.Clock = () => start + (long)TimeSpan.FromMinutes(30).TotalMilliseconds;
-                    await HeadHunts.TickAsync();
-                    Assert.False(HeadHunts.HuntedNow(prey));
-                    HeadHunts.Clock = () => start + (long)TimeSpan.FromMinutes(47).TotalMilliseconds;
-                    await HeadHunts.TickAsync();
-                    Assert.True(HeadHunts.HuntedNow(prey));
+                    hunts.Clock = () => start + (long)TimeSpan.FromMinutes(30).TotalMilliseconds;
+                    await hunts.TickAsync();
+                    Assert.False(hunts.HuntedNow(prey));
+                    hunts.Clock = () => start + (long)TimeSpan.FromMinutes(47).TotalMilliseconds;
+                    await hunts.TickAsync();
+                    Assert.True(hunts.HuntedNow(prey));
                 }
                 finally
                 {
-                    HeadHunts.Clock = clock;
+                    hunts.Clock = clock;
                 }
             }, "C");
 
         [Fact]
-        public async Task The_mod_asks_with_the_players_own_session()
+        public async Task The_loaded_package_serves_routes_settles_hunts_and_restores_saved_orders()
         {
             string packages = Path.Combine(AppContext.BaseDirectory, "ServerModFixtures");
-            using var enabled = ServerModLoader.Load(packages, ["cazacabezas"], _ => { });
-            using var disabled = ServerModLoader.Load(packages, [], _ => { });
+            using var disabled = ServerModLoader.Load(Path.Combine(packages, "absent"), [], _ => { });
             var catalog = new ClientModCatalog(packages, []);
             int port;
             using (var probe = new TcpListener(IPAddress.Loopback, 0))
@@ -202,14 +205,16 @@ namespace Jondo.Unity.Tests.World
             using var http = new HttpClient { BaseAddress = new Uri(address), Timeout = TimeSpan.FromSeconds(10) };
 
             ServerSettings.UseForTests(new ServerSettings { HeadHunters = true });
-            HeadHunts.Reset();
+            var storage = new HeadHunts(new HuntWorld());
             long hunter = Create(HunterAccount, "Cazador-D", 100);
             long prey = Create(PreyAccount, "Presa-D", 110);
             const string token = "head-hunt-test-token";
             try
             {
-                HeadHunts.Erase(hunter);
-                HeadHunts.Erase(prey);
+                storage.CharacterDeleted(hunter);
+                storage.CharacterDeleted(prey);
+                using var enabled = ServerModLoader.Load(packages, ["cazacabezas"], _ => { });
+                enabled.StartGameplay();
                 Sworn(hunter, Alignments.Bonta);
                 Sworn(prey, Alignments.Brakmar);
                 ClientLaunchRegistry.RegisterToken(HunterAccount, token);
@@ -250,6 +255,11 @@ namespace Jondo.Unity.Tests.World
                 var board = (await Ask("board")).GetProperty("prey").EnumerateArray().ToList();
                 Assert.Contains(board, p => p.GetProperty("id").GetInt64() == prey);
 
+                ServerSettings.UseForTests(new ServerSettings { HeadHunters = false });
+                Assert.False((await Ask("status")).GetProperty("on").GetBoolean());
+                Assert.Equal("off", (await Ask("take", ",\"target\":" + prey, 409)).GetProperty("error").GetString());
+                ServerSettings.UseForTests(new ServerSettings { HeadHunters = true });
+
                 var taken = await Ask("take", ",\"target\":" + prey);
                 Assert.Equal(prey, taken.GetProperty("taken").GetInt64());
                 Assert.Equal("busy", (await Ask("take", ",\"target\":" + prey, 409)).GetProperty("error").GetString());
@@ -257,8 +267,20 @@ namespace Jondo.Unity.Tests.World
                 Assert.Equal(prey, order.GetProperty("target").GetInt64());
                 Assert.False(order.GetProperty("open").GetBoolean());
 
+                await using var p = await ClientPipe.OpenAsync(PreyAccount, prey, Map, "Presa-D");
+                p.Session.State.CharacterLevel = 110;
+                using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(12)))
+                    while (!HuntGameplay.HuntedNow(prey))
+                        await Task.Delay(50, timeout.Token);
+                await AlignmentWar.AnnounceAsync(Aggression(hunter, 100, prey, 110), attackersWon: true);
+                status = await Ask("status");
+                Assert.Equal(1, status.GetProperty("kills").GetInt32());
+                Assert.Equal(order.GetProperty("bounty").GetInt32(), status.GetProperty("chapeuvepes").GetInt32());
+                Assert.Equal(JsonValueKind.Null, status.GetProperty("order").ValueKind);
+
+                await Ask("take", ",\"target\":" + prey);
                 Assert.True((await Ask("abandon")).GetProperty("abandoned").GetBoolean());
-                Assert.Null(HeadHunts.OrderOf(hunter));
+                Assert.Equal(JsonValueKind.Null, (await Ask("status")).GetProperty("order").ValueKind);
 
                 foreach (string route in new[] { "status", "board", "take", "abandon" })
                 {
@@ -269,12 +291,61 @@ namespace Jondo.Unity.Tests.World
                 enabled.Dispose();
                 var stopped = await Send("status", Body(), 404, enabled.ControlRoutes);
                 Assert.Equal("ruta", stopped.GetProperty("error").GetString());
+
+                // Simulate a row left by the old built-in implementation when it shut down.
+                using var database = new SqliteConnection(DatabaseManager.WorldConnectionString);
+                database.Open();
+                using var saved = database.CreateCommand();
+                saved.CommandText = """
+                    UPDATE HeadHunters SET Chapeuvepes = 19, Kills = 3, LockedUntilMs = 0 WHERE CharacterId = $hunter;
+                    INSERT INTO HeadHuntOrders (Hunter, Target, TakenMs, OpenUntilMs, RestUntilMs)
+                    VALUES ($hunter, $prey, $now, $now + 120000, $now + 60000);
+                    """;
+                saved.Parameters.AddWithValue("$hunter", hunter);
+                saved.Parameters.AddWithValue("$prey", prey);
+                saved.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                saved.ExecuteNonQuery();
+
+                using (var restarted = ServerModLoader.Load(packages, ["cazacabezas"], _ => { }))
+                {
+                    restarted.StartGameplay();
+                    var restored = await Send("status", Body(), 200, restarted.ControlRoutes);
+                    Assert.Equal(19, restored.GetProperty("chapeuvepes").GetInt32());
+                    Assert.Equal(3, restored.GetProperty("kills").GetInt32());
+                    var restoredOrder = restored.GetProperty("order");
+                    Assert.Equal(prey, restoredOrder.GetProperty("target").GetInt64());
+                    Assert.False(restoredOrder.GetProperty("open").GetBoolean());
+                    Assert.InRange(restoredOrder.GetProperty("restSeconds").GetInt32(), 110, 120);
+
+                    // The Brakmarian signs Morry Gann's first-tier renunciation.
+                    p.Session.State.Kamas = 500;
+                    using (SessionContext.Push(p.Session))
+                        await AlignmentHandler.ReplyAsync(p.ToClient, AlignmentHandler.Morry, 78171);
+                    Assert.Equal(Alignments.Neutral, Alignments.Of(prey).Side);
+                    restored = await Send("status", Body(), 200, restarted.ControlRoutes);
+                    Assert.Equal(JsonValueKind.Null, restored.GetProperty("order").ValueKind);
+
+                    // Leave the package with a saved order that can open as soon as the fight clears.
+                    Sworn(prey, Alignments.Brakmar);
+                    p.Session.State.IsInFight = true;
+                    await Send("take", Body(",\"target\":" + prey), 200, restarted.ControlRoutes);
+                }
+
+                // A due order with both characters present stays closed without the package.
+                p.Session.State.IsInFight = false;
+                using (SessionContext.Push(p.Session))
+                    await AlignmentHandler.PvpAsync(p.ToClient, ConnectionProtocol.Push("hnu", Array.Empty<byte>()));
+                Assert.False(Alignments.Of(prey).PvpOn);
+                Assert.Null(HuntGameplay.Current);
+                await Task.Delay(TimeSpan.FromSeconds(6));
+                saved.CommandText = "SELECT OpenUntilMs FROM HeadHuntOrders WHERE Hunter = $hunter;";
+                Assert.Equal(0L, saved.ExecuteScalar());
             }
             finally
             {
-                HeadHunts.Erase(hunter);
-                HeadHunts.Erase(prey);
-                HeadHunts.Reset();
+                var cleanup = new HeadHunts(new HuntWorld());
+                cleanup.CharacterDeleted(hunter);
+                cleanup.CharacterDeleted(prey);
                 ServerSettings.UseForTests(new ServerSettings());
                 DatabaseManager.DeleteCharacter(hunter, HunterAccount);
                 DatabaseManager.DeleteCharacter(prey, PreyAccount);
@@ -284,22 +355,20 @@ namespace Jondo.Unity.Tests.World
         }
 
         [Fact]
-        public async Task A_chapeuvepe_trade_needs_the_chapeuvepes()
+        public void A_chapeuvepe_trade_needs_the_chapeuvepes()
         {
             const long someone = 8_980_000_099;
-            HeadHunts.Reset();
+            var hunts = new HeadHunts(new HuntWorld());
             try
             {
-                Assert.False(HeadHunts.Pay(someone, -2));
-                Assert.True(HeadHunts.Pay(someone, 5));
-                Assert.True(HeadHunts.Pay(someone, -2));
-                Assert.Equal(3, HeadHunts.Of(someone).Chapeuvepes);
-                await Task.CompletedTask;
+                Assert.False(hunts.Pay(someone, -2));
+                Assert.True(hunts.Pay(someone, 5));
+                Assert.True(hunts.Pay(someone, -2));
+                Assert.Equal(3, hunts.Of(someone).Chapeuvepes);
             }
             finally
             {
-                HeadHunts.Pay(someone, -HeadHunts.Of(someone).Chapeuvepes);
-                HeadHunts.Reset();
+                hunts.CharacterDeleted(someone);
             }
         }
     }

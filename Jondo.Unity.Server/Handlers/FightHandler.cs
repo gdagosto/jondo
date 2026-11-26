@@ -6,8 +6,10 @@ using System.Linq;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
+using Jondo.Unity.Server.Mods;
 using Jondo.Unity.Server.Network;
 using Jondo.Unity.Server.Managers;
+using Jondo.Unity.ServerMods;
 using Jondo.Unity.World.Fights;
 using Jondo.Unity.World.Maps;
 using static Jondo.Unity.Server.Network.NetworkEnvelope;
@@ -2174,7 +2176,7 @@ namespace Jondo.Unity.Server.Handlers
                 || session.State.IsInFight || session.State.SpectatingFightId != 0) return;
             using var context = SessionContext.Push(session); // Legacy hunt checks and fight creation.
             if (await DreamHandler.GuestMayNotFightAsync(session)) return;
-            if (await Managers.HeadHunts.HoldsAsync(session.Stream, Managers.HeadHunts.Hold.Fight)) return;
+            if (await HuntGameplay.HoldsAsync(session.Stream, HuntActivity.Fight)) return;
             if (PhantomHandler.CannotFight(session.CharacterId)) return;
 
             long here = session.MapId;
