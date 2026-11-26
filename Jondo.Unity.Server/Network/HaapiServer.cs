@@ -12,40 +12,44 @@ namespace Jondo.Unity.Server.Network
         private static bool _isRunning;
 
         public static void Start(int port)
+            => Start(port, new ClientModCatalog(Paths.ClientModsDirectory, ServerSettings.Current.ClientMods));
+
+        internal static void Start(int port, ClientModCatalog clientMods)
         {
             if (_isRunning) return;
             _isRunning = true;
 
-            _listener = new HttpListener();
+            var listener = new HttpListener();
+            _listener = listener;
             if (ServerBinding.Public)
             {
-                _listener.Prefixes.Add($"http://+:{port}/");
+                listener.Prefixes.Add($"http://+:{port}/");
             }
             else
             {
-                _listener.Prefixes.Add($"http://localhost:{port}/");
-                _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+                listener.Prefixes.Add($"http://localhost:{port}/");
+                listener.Prefixes.Add($"http://127.0.0.1:{port}/");
             }
-            _listener.Start();
+            listener.Start();
 
             Console.WriteLine($"[+] HAAPI HTTP Server listening on port {port}");
 
             _ = Task.Run(async () =>
             {
-                while (_isRunning && _listener != null)
+                while (_isRunning && _listener == listener)
                 {
                     try
                     {
-                        var ctx = await _listener.GetContextAsync();
+                        var ctx = await listener.GetContextAsync();
 
                         // With a ceiling. Before, it was dispatched bare with «_ = ...», with no queue or limit,
                         // so N simultaneous requests added up their bodies in memory and their
                         // PBKDF2 in threads. The semaphore rejects nobody: it makes them wait.
-                        _ = AtenderConTechoAsync(ctx);
+                        _ = AtenderConTechoAsync(ctx, clientMods);
                     }
                     catch (Exception ex)
                     {
-                        if (!_isRunning) break;
+                        if (!_isRunning || _listener != listener) break;
                         Console.WriteLine($"[HAAPI Error] {ex.Message}");
                     }
                 }
@@ -87,10 +91,10 @@ namespace Jondo.Unity.Server.Network
         /// </remarks>
         private static readonly SemaphoreSlim _aLaVez = new SemaphoreSlim(8, 8);
 
-        private static async Task AtenderConTechoAsync(HttpListenerContext ctx)
+        private static async Task AtenderConTechoAsync(HttpListenerContext ctx, ClientModCatalog clientMods)
         {
             await _aLaVez.WaitAsync();
-            try { await HandleHaapiRequestAsync(ctx); }
+            try { await HandleHaapiRequestAsync(ctx, clientMods); }
             finally { _aLaVez.Release(); }
         }
 
@@ -118,7 +122,7 @@ namespace Jondo.Unity.Server.Network
             return (req.ContentEncoding ?? System.Text.Encoding.UTF8).GetString(acumulado.ToArray());
         }
 
-        private static async Task HandleHaapiRequestAsync(HttpListenerContext ctx)
+        internal static async Task HandleHaapiRequestAsync(HttpListenerContext ctx, ClientModCatalog clientMods)
         {
             var req = ctx.Request;
             var resp = ctx.Response;
@@ -176,11 +180,11 @@ namespace Jondo.Unity.Server.Network
             // Account tokens authorize session routes; ConRol also checks the administrator role.
             if (path.StartsWith(ClientModManifest.Route + "/", StringComparison.Ordinal))
             {
-                await ServeClientModAsync(path[(ClientModManifest.Route.Length + 1)..], req.HttpMethod, resp);
+                await ServeClientModAsync(path[(ClientModManifest.Route.Length + 1)..], req.HttpMethod, resp, clientMods);
                 return;
             }
 
-            var deControl = ControlApi.Responder(path, req.HttpMethod, body, clientIp);
+            var deControl = ControlApi.Responder(path, req.HttpMethod, body, clientIp, clientMods);
             if (deControl != null)
             {
                 byte[] cuerpo = System.Text.Encoding.UTF8.GetBytes(deControl.Value.Json);
@@ -229,7 +233,8 @@ namespace Jondo.Unity.Server.Network
             }
         }
 
-        private static async Task ServeClientModAsync(string name, string method, HttpListenerResponse response)
+        private static async Task ServeClientModAsync(string name, string method, HttpListenerResponse response,
+            ClientModCatalog clientMods)
         {
             bool streaming = false;
             try
@@ -241,7 +246,7 @@ namespace Jondo.Unity.Server.Network
                     return;
                 }
 
-                using var file = ClientModCatalog.OpenDownload(Paths.ClientModsDirectory, ServerSettings.Current.ClientMods, name);
+                using var file = clientMods.OpenDownload(name);
                 if (file == null)
                 {
                     response.StatusCode = 404;

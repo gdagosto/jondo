@@ -56,6 +56,9 @@ namespace Jondo.Unity.Server.Network
         /// HAAPI carries on with its own.
         /// </summary>
         public static Respuesta? Responder(string ruta, string metodo, string cuerpo, string ip = "")
+            => Responder(ruta, metodo, cuerpo, ip, null);
+
+        internal static Respuesta? Responder(string ruta, string metodo, string cuerpo, string ip, ClientModCatalog? clientMods)
         {
             if (!ruta.StartsWith(Prefijo, StringComparison.Ordinal)) return null;
 
@@ -73,7 +76,7 @@ namespace Jondo.Unity.Server.Network
                     case Prefijo + "entrar": return Entrar(cuerpo, ip);
                     case Prefijo + "crear-cuenta": return CrearCuenta(cuerpo, ip);
                     case ClientModManifest.Route:
-                        return Mods(metodo, Paths.ClientModsDirectory, ServerSettings.Current.ClientMods);
+                        return Mods(metodo, clientMods ?? new ClientModCatalog(Paths.ClientModsDirectory, ServerSettings.Current.ClientMods));
 
                     // ─── With a session ─────────────────────────────────────────────────────
                     // A token the base recognises is needed. The role does not matter: they are things
@@ -145,13 +148,13 @@ namespace Jondo.Unity.Server.Network
             }
         }
 
-        internal static Respuesta Mods(string metodo, string directory, IReadOnlyList<string> names)
+        internal static Respuesta Mods(string metodo, ClientModCatalog clientMods)
         {
             if (!metodo.Equals("GET", StringComparison.OrdinalIgnoreCase)) return Mal(405, "metodo");
 
             try
             {
-                return Bien(ClientModCatalog.CreateManifest(directory, names));
+                return Bien(clientMods.CreateManifest());
             }
             catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException)
             {

@@ -3,6 +3,8 @@ using System.Runtime.Loader;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using Jondo.Unity.Launcher;
+using Jondo.Unity.Server.Network;
 using Jondo.Unity.ServerMods;
 
 namespace Jondo.Unity.Server.Mods;
@@ -13,6 +15,9 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
     private static readonly Regex ModId = new(@"\A[A-Za-z0-9][A-Za-z0-9._-]*\z", RegexOptions.CultureInvariant);
     private readonly Stack<Host> _started = new();
     private int _stopped;
+
+    public ClientModCatalog.Asset[] ClientAssets => _started.Reverse().Select(host => host.ClientAsset)
+        .OfType<ClientModCatalog.Asset>().ToArray();
 
     public static ServerModLoader Load(string directory, string[] enabledIds, Action<string> log)
     {
@@ -98,9 +103,14 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
             var manifest = manifestJson.Deserialize<Manifest>();
             string label = $"{Path.GetFileName(package)} ({manifest.Id})";
             host = new Host(log, label);
-            var mod = LoadPackage(package, manifest, host);
+            var mod = LoadPackage(package, manifest, host, out string? clientPath);
             mod.Initialize(host);
             host.Mod = mod;
+            if (ClientModManifest.IsDllName(Path.GetFileName(clientPath)))
+            {
+                string root = Path.GetDirectoryName(package);
+                host.ClientAsset = new ClientModCatalog.Asset(root, Path.GetRelativePath(root, clientPath));
+            }
             log($"[Server mods] {label} initialized (version {manifest.Version}).");
             _started.Push(host);
         }
@@ -111,7 +121,7 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
         }
     }
 
-    private static IServerMod LoadPackage(string package, Manifest manifest, Host host)
+    private static IServerMod LoadPackage(string package, Manifest manifest, Host host, out string? clientPath)
     {
         if (string.IsNullOrWhiteSpace(manifest.Version))
             throw new InvalidDataException("Missing 'version'.");
@@ -119,11 +129,12 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
             throw new InvalidDataException($"Expected 'serverApiVersion' {ServerModApi.Version}, got {manifest.ServerApiVersion}.");
 
         string assemblyPath = RequirePackageFile(package, manifest.ServerAssembly, "serverAssembly");
-        if (manifest.ClientAsset != null)
-            RequirePackageFile(package, manifest.ClientAsset, "clientAsset");
+        clientPath = manifest.ClientAsset == null ? null : RequirePackageFile(package, manifest.ClientAsset, "clientAsset");
+        if (string.Equals(clientPath, assemblyPath, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("'clientAsset' cannot be the server assembly.");
 
         RejectLink(Path.ChangeExtension(assemblyPath, ".deps.json"));
-        var context = new PackageLoadContext(package, assemblyPath);
+        var context = new PackageLoadContext(package, assemblyPath, clientPath);
         host.RegisterCleanup(context.Unload);
         var entryPoints = context.LoadPackageAssembly(assemblyPath).GetExportedTypes()
             .Where(type => type.IsClass && !type.IsAbstract && !type.ContainsGenericParameters &&
@@ -188,6 +199,7 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
         private readonly Stack<Action> _cleanup = new();
         private bool _stopping;
         internal IServerMod Mod { get; set; }
+        internal ClientModCatalog.Asset? ClientAsset { get; set; }
 
         public void Log(string message) => log($"[Server mods] {label}: {message}");
 
@@ -217,7 +229,7 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
         }
     }
 
-    private sealed class PackageLoadContext(string package, string assemblyPath) : AssemblyLoadContext(isCollectible: true)
+    private sealed class PackageLoadContext(string package, string assemblyPath, string? clientPath) : AssemblyLoadContext(isCollectible: true)
     {
         private static readonly Assembly ContractAssembly = typeof(IServerMod).Assembly;
         private readonly AssemblyDependencyResolver _resolver = new(assemblyPath);
@@ -242,8 +254,11 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
                     path = adjacent;
             }
 
-            return path == null ? null : LoadPackageAssembly(
-                RequirePackageFile(package, Path.GetRelativePath(package, path), $"dependency {name.Name}"));
+            if (path == null) return null;
+            path = RequirePackageFile(package, Path.GetRelativePath(package, path), $"dependency {name.Name}");
+            if (string.Equals(path, clientPath, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("'clientAsset' cannot be a private server dependency.");
+            return LoadPackageAssembly(path);
         }
     }
 }

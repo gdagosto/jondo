@@ -14,7 +14,13 @@ Place each package in its own directory under `<emulator root>/server-mods/`. Th
 
 `id` identifies the mod across package renames and upgrades. It starts with an ASCII letter or digit and can also contain dots, underscores and hyphens. ID comparison ignores case. An enabled ID must identify exactly one package. `version` is a nonempty release string. `serverApiVersion` is an integer and must equal `ServerModApi.Version`.
 
-`serverAssembly` and `clientAsset` are package-relative file paths. Each declared file must exist. Use `/` for nested folders. The loader rejects absolute paths, `.` and `..` components, and links or junctions in package paths. `clientAsset` may be omitted or set to `null` for server-only mods. The loader validates the asset path during startup. Client distribution still uses the existing client mod catalog.
+`serverAssembly` and `clientAsset` are package-relative file paths. Each declared file must exist. Use `/` for nested folders. The loader rejects absolute paths, `.` and `..` components, and links or junctions in package paths. Omit `clientAsset` or set it to `null` for a server-only mod.
+
+After a package initializes successfully, its declared client asset contributes one entry to `GET /api/mods` if its filename meets the client DLL naming rules. Download URLs use the exact filename from that manifest. The server looks up the approved file by name. Server assemblies, private dependencies, manifests, and other package paths are private.
+
+Configured standalone DLLs in `mods/` keep their load order. A package DLL with the same name, ignoring case, takes the standalone entry's slot. Other package DLLs follow in `ServerMods` order. If multiple packages declare the same filename, the first enabled package wins. If the winning file becomes unavailable, its entry is omitted until it returns.
+
+Existing standalone `Cazacabezas.dll` and `Heroes.dll` still load when listed in `ClientMods` and no active package supplies that filename. When switching to a package, remove the old filename from `ClientMods` if the replacement uses a different filename or if disabling the package should stop serving the old DLL. For manifest-based launches, the launcher sets aside older copies from the game's `Mods/` folder so the game loads the versions selected by the manifest.
 
 ## Enable packages
 

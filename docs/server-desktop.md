@@ -140,7 +140,10 @@ settings you already have in the file.
 }
 ```
 
-An empty `ClientMods` array serves no client DLLs. Existing flat Heroes and
+An empty `ClientMods` array serves no standalone client DLLs. Enabled server
+packages can contribute their declared client DLLs. See the
+[server mod contract](server-mod-contract.md) for package order and filename conflicts.
+Existing flat Heroes and
 Cazacabezas settings are read from older files and saved under the corresponding
 mod name. Custom MelonLoader DLLs can be added to the same ordered list. Their
 configuration is handled by the mods themselves. The server Settings card provides

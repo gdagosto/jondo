@@ -1,6 +1,12 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Net.Sockets;
 using System.Runtime.Loader;
+using System.Security.Cryptography;
 using System.Text.Json;
+using Jondo.Unity.Launcher;
 using Jondo.Unity.Server.Mods;
+using Jondo.Unity.Server.Network;
 using Jondo.Unity.ServerMods;
 using Xunit;
 
@@ -31,6 +37,7 @@ public sealed class ServerModLoaderTests : IDisposable
 
         using var mods = ServerModLoader.Load(_root.FullName, ["Fixture.External"], _messages.Add);
 
+        Assert.Empty(mods.ClientAssets);
         Assert.Contains("[Server mods] external (fixture.external): fixture initialized through its private dependency", _messages);
         Assert.Contains("[Server mods] external (fixture.external) initialized (version 1.0.0).", _messages);
         Assert.DoesNotContain(_messages, message => message.Contains("fixture.broken"));
@@ -38,6 +45,96 @@ public sealed class ServerModLoaderTests : IDisposable
             assembly => assembly.GetName().Name is "Fixture.ServerMod" or "Fixture.ServerModDependency");
         Assert.DoesNotContain(typeof(ServerModLoader).Assembly.GetReferencedAssemblies(),
             assembly => assembly.Name is "Fixture.ServerMod" or "Fixture.ServerModDependency" or "Cazacabezas" or "Heroes");
+    }
+
+    [Fact]
+    public async Task ClientEndpointsPublishOnlyActiveDeclaredDllsAndConfiguredStandaloneMods()
+    {
+        var modsRoot = Directory.CreateDirectory(Path.Combine(_root.FullName, "mods"));
+        File.WriteAllBytes(Path.Combine(modsRoot.FullName, "JondoFix.dll"), [1]);
+        File.WriteAllBytes(Path.Combine(modsRoot.FullName, "Heroes.dll"), [2]);
+        File.WriteAllBytes(Path.Combine(modsRoot.FullName, "Cazacabezas.dll"), [3]);
+        InstallFixture("z-first", "client/Heroes.dll", [4, 5]);
+        InstallFixture("a-second", "client/heroes.dll", [6]);
+        InstallFixture("extra", "client/Extra.dll", [7]);
+        InstallFixture("disabled", "client/Disabled.dll", [8]);
+        InstallFixture("server-only");
+        string[] standalone = ["JondoFix.dll", "Heroes.dll", "Cazacabezas.dll", AssemblyFile];
+
+        using var mods = ServerModLoader.Load(_root.FullName,
+            ["fixture.z-first", "fixture.a-second", "fixture.extra", "fixture.server-only"], _messages.Add);
+        var catalog = new ClientModCatalog(modsRoot.FullName, standalone, mods.ClientAssets);
+        int port;
+        using (var probe = new TcpListener(IPAddress.Loopback, 0))
+        {
+            probe.Start();
+            port = ((IPEndPoint)probe.LocalEndpoint).Port;
+        }
+        using var listener = new HttpListener();
+        string address = $"http://localhost:{port}/";
+        listener.Prefixes.Add(address);
+        listener.Start();
+        using var http = new HttpClient { BaseAddress = new Uri(address), Timeout = TimeSpan.FromSeconds(10) };
+
+        async Task<HttpResponseMessage> Get(string path)
+        {
+            Task<HttpResponseMessage> pending = http.GetAsync(path);
+            var request = await listener.GetContextAsync().WaitAsync(http.Timeout);
+            await HaapiServer.HandleHaapiRequestAsync(request, catalog).WaitAsync(http.Timeout);
+            return await pending;
+        }
+
+        string route = ClientModManifest.Route;
+        using var response = await Get(route);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(response.Headers.CacheControl?.NoStore);
+        var manifest = (await response.Content.ReadFromJsonAsync<ClientModManifest>())!;
+        Assert.Equal(["JondoFix.dll", "Heroes.dll", "Cazacabezas.dll", "Extra.dll"], manifest.Mods.Select(mod => mod.Name));
+
+        using var download = await Get(route + "/Heroes.dll");
+        Assert.Equal(HttpStatusCode.OK, download.StatusCode);
+        Assert.True(download.Headers.CacheControl?.NoStore);
+        Assert.Equal("application/octet-stream", download.Content.Headers.ContentType?.MediaType);
+        byte[] bytes = await download.Content.ReadAsByteArrayAsync();
+        Assert.Equal(new byte[] { 4, 5 }, bytes);
+        Assert.Equal(bytes.Length, manifest.Mods[1].Size);
+        Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(bytes)), manifest.Mods[1].Sha256);
+
+        using var fix = await Get(route + "/JondoFix.dll");
+        Assert.Equal(HttpStatusCode.OK, fix.StatusCode);
+        Assert.Equal(new byte[] { 1 }, await fix.Content.ReadAsByteArrayAsync());
+        using var extra = await Get(route + "/Extra.dll");
+        Assert.Equal(HttpStatusCode.OK, extra.StatusCode);
+        Assert.Equal(new byte[] { 7 }, await extra.Content.ReadAsByteArrayAsync());
+
+        foreach (string name in new[] { AssemblyFile, DependencyFile, "manifest.json", "client/Extra.dll", "heroes.dll", "Disabled.dll" })
+        {
+            using var rejected = await Get(route + "/" + name);
+            Assert.Equal(HttpStatusCode.NotFound, rejected.StatusCode);
+        }
+
+        File.Delete(Path.Combine(_root.FullName, "z-first", "client", "Heroes.dll"));
+        using var unavailable = await Get(route + "/Heroes.dll");
+        Assert.Equal(HttpStatusCode.NotFound, unavailable.StatusCode);
+        Assert.DoesNotContain(catalog.CreateManifest().Mods, mod => mod.Name.Equals("Heroes.dll", StringComparison.OrdinalIgnoreCase));
+
+        using var disabled = ServerModLoader.Load(_root.FullName, [], _messages.Add);
+        var legacy = new ClientModCatalog(modsRoot.FullName, standalone, disabled.ClientAssets);
+        using var fallback = legacy.OpenDownload("Heroes.dll");
+        Assert.NotNull(fallback);
+        Assert.Equal(2, fallback.ReadByte());
+    }
+
+    [Fact]
+    public void RejectsClientAssetUsedAsPrivateServerDependency()
+    {
+        string package = CreatePackage("private", clientAsset: DependencyFile);
+        CopyFixture(AssemblyFile, package);
+        CopyFixture(DependencyFile, package);
+
+        var failure = Assert.Throws<InvalidOperationException>(() =>
+            ServerModLoader.Load(_root.FullName, ["fixture.private"], _messages.Add));
+        Assert.Contains("'clientAsset' cannot be a private server dependency", failure.ToString());
     }
 
     [Fact]
@@ -59,6 +156,7 @@ public sealed class ServerModLoaderTests : IDisposable
     [InlineData(1, "../outside.dll", null, "'serverAssembly' must be a package-relative file path")]
     [InlineData(1, "C:\\outside.dll", null, "'serverAssembly' must be a package-relative file path")]
     [InlineData(1, AssemblyFile, "..\\outside.dat", "'clientAsset' must be a package-relative file path")]
+    [InlineData(1, AssemblyFile, AssemblyFile, "'clientAsset' cannot be the server assembly")]
     public void RejectsInvalidPackages(int api, string serverAssembly, string? clientAsset, string error)
     {
         string package = CreatePackage("bad", api: api, serverAssembly: serverAssembly, clientAsset: clientAsset);
@@ -100,7 +198,7 @@ public sealed class ServerModLoaderTests : IDisposable
     {
         string missingRoot = Path.Combine(_root.FullName, "server-mods");
         await Program.RunEmulationAsync(missingRoot, ServerSettings.Read("{}").ServerMods,
-            new TaskCompletionSource().Task, () =>
+            new TaskCompletionSource().Task, _ =>
             {
                 _messages.Add("ready");
                 return Task.CompletedTask;
@@ -122,7 +220,7 @@ public sealed class ServerModLoaderTests : IDisposable
         var settings = ServerSettings.Read("""{"ServerMods":["fixture.z-first","FIXTURE.A-SECOND"]}""");
         var shutdown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        Task run = Program.RunEmulationAsync(_root.FullName, settings.ServerMods, shutdown.Task, () =>
+        Task run = Program.RunEmulationAsync(_root.FullName, settings.ServerMods, shutdown.Task, _ =>
         {
             _messages.Add("ready");
             return shutdown.Task;
@@ -160,7 +258,7 @@ public sealed class ServerModLoaderTests : IDisposable
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             Program.RunEmulationAsync(_root.FullName, ["fixture.first", "fixture.broken", "fixture.later"],
-                new TaskCompletionSource().Task, () => throw new Xunit.Sdk.XunitException("Listeners started"),
+                new TaskCompletionSource().Task, _ => throw new Xunit.Sdk.XunitException("Listeners started"),
                 () => _messages.Add("host stopped"), _messages.Add));
 
         string failure = Program.StartupFailure(exception);
@@ -185,7 +283,7 @@ public sealed class ServerModLoaderTests : IDisposable
         InstallFixture("first");
         var shutdown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await Program.RunEmulationAsync(_root.FullName, ["fixture.first"], shutdown.Task,
-            () => throw new Xunit.Sdk.XunitException("Listeners started"), () => _messages.Add("host stopped"),
+            _ => throw new Xunit.Sdk.XunitException("Listeners started"), () => _messages.Add("host stopped"),
             message =>
             {
                 _messages.Add(message);
@@ -208,11 +306,17 @@ public sealed class ServerModLoaderTests : IDisposable
         Assert.True(edited.DiffersFrom(running));
     }
 
-    private void InstallFixture(string folder)
+    private void InstallFixture(string folder, string? clientAsset = null, byte[]? bytes = null)
     {
-        string package = CreatePackage(folder);
+        string package = CreatePackage(folder, clientAsset: clientAsset);
         CopyFixture(AssemblyFile, package);
         CopyFixture(DependencyFile, package);
+        if (clientAsset != null)
+        {
+            string path = Path.Combine(package, clientAsset);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllBytes(path, bytes!);
+        }
     }
 
     private string CreatePackage(string name, string? id = null, int api = ServerModApi.Version,

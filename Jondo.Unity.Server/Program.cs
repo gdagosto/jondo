@@ -255,14 +255,14 @@ namespace Jondo.Unity.Server
         }
 
         internal static async Task RunEmulationAsync(string modsDirectory, string[] enabledMods, Task shutdown,
-            Func<Task> serve, Action stopServices, Action<string> log)
+            Func<Mods.ServerModLoader, Task> serve, Action stopServices, Action<string> log)
         {
             if (shutdown.IsCompleted) return;
             try
             {
                 using var mods = Mods.ServerModLoader.Load(modsDirectory, enabledMods, log);
                 if (!shutdown.IsCompleted)
-                    await serve();
+                    await serve(mods);
             }
             finally
             {
@@ -270,7 +270,7 @@ namespace Jondo.Unity.Server
             }
         }
 
-        private static async Task RunEmulationServicesAsync()
+        private static async Task RunEmulationServicesAsync(Mods.ServerModLoader mods)
         {
             Console.WriteLine("[+] Starting services...");
             try
@@ -281,7 +281,8 @@ namespace Jondo.Unity.Server
                     Console.WriteLine("[!] Public binding does not encrypt traffic. Use it only on " +
                                       "a trusted network or behind a VPN/tunnel.");
                 }
-                HaapiServer.Start(haapiPort);
+                var clientMods = new ClientModCatalog(Paths.ClientModsDirectory, ServerSettings.Current.ClientMods, mods.ClientAssets);
+                HaapiServer.Start(haapiPort, clientMods);
                 ZaapServer.Start(port);
                 GameServerProxy.Start(gamePort);
                 GameNodeProxy.Start(gameNodePort);

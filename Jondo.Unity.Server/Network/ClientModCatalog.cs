@@ -3,8 +3,47 @@ using Jondo.Unity.Launcher;
 
 namespace Jondo.Unity.Server.Network;
 
-internal static class ClientModCatalog
+internal sealed class ClientModCatalog
 {
+    internal sealed record Asset(string Directory, string RelativePath)
+    {
+        public string Name => Path.GetFileName(RelativePath);
+    }
+
+    private readonly List<Asset> _ordered = [];
+    private readonly Dictionary<string, Asset> _downloads = new(StringComparer.Ordinal);
+    private readonly string? _orderError;
+
+    public ClientModCatalog(string directory, IReadOnlyList<string> names, IReadOnlyList<Asset>? packageAssets = null)
+    {
+        var packages = new Dictionary<string, Asset>(StringComparer.OrdinalIgnoreCase);
+        foreach (Asset asset in packageAssets ?? [])
+            packages.TryAdd(asset.Name, asset);
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string name in names)
+        {
+            if (!ClientModManifest.IsDllName(name) || !seen.Add(name))
+            {
+                _orderError ??= $"Invalid or repeated client mod filename: {name}";
+                continue;
+            }
+
+            Add(packages.Remove(name, out var replacement) ? replacement : new Asset(directory, name));
+        }
+
+        foreach (Asset asset in packageAssets ?? [])
+        {
+            if (packages.Remove(asset.Name, out var remaining)) Add(remaining);
+        }
+    }
+
+    private void Add(Asset asset)
+    {
+        _ordered.Add(asset);
+        _downloads.Add(asset.Name, asset);
+    }
+
     public static string[] ListAvailable(string directory)
     {
         try
@@ -28,52 +67,52 @@ internal static class ClientModCatalog
         }
     }
 
-    public static ClientModManifest CreateManifest(string directory, IReadOnlyList<string> names)
+    public ClientModManifest CreateManifest()
     {
-        var entries = new List<ClientModEntry>(Math.Min(names.Count, ClientModManifest.MaxEntries));
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (_orderError != null) throw new InvalidDataException(_orderError);
 
-        foreach (string name in names)
+        var entries = new List<ClientModEntry>(Math.Min(_ordered.Count, ClientModManifest.MaxEntries));
+        foreach (Asset asset in _ordered)
         {
-            if (!ClientModManifest.IsDllName(name) || !seen.Add(name))
-                throw new InvalidDataException($"Invalid or repeated client mod filename: {name}");
-
-            using FileStream? file = OpenFile(directory, name);
+            using FileStream? file = OpenFile(asset);
             if (file == null) continue;
 
             if (entries.Count == ClientModManifest.MaxEntries)
                 throw new InvalidDataException($"Client mod order exceeds {ClientModManifest.MaxEntries} available DLLs.");
 
-            entries.Add(new ClientModEntry(name, file.Length, Convert.ToHexStringLower(SHA256.HashData(file))));
+            entries.Add(new ClientModEntry(asset.Name, file.Length, Convert.ToHexStringLower(SHA256.HashData(file))));
         }
 
         return new ClientModManifest(entries.ToArray());
     }
 
-    public static FileStream? OpenDownload(string directory, IReadOnlyList<string> names, string name)
-    {
-        if (!ClientModManifest.IsDllName(name) || !names.Contains(name, StringComparer.Ordinal)) return null;
+    public FileStream? OpenDownload(string? name)
+        => name != null && _downloads.TryGetValue(name, out Asset? asset) ? OpenFile(asset) : null;
 
-        return OpenFile(directory, name);
-    }
-
-    private static FileStream? OpenFile(string directory, string name)
+    private static FileStream? OpenFile(Asset asset)
     {
-        string path = Path.Combine(directory, name);
+        string path = Path.Combine(asset.Directory, asset.RelativePath);
         try
         {
             const FileAttributes DirectoryOrLink = FileAttributes.Directory | FileAttributes.ReparsePoint;
-            if ((File.GetAttributes(directory) & DirectoryOrLink) != FileAttributes.Directory
-                || (File.GetAttributes(path) & DirectoryOrLink) != 0) return null;
+            string directory = asset.Directory;
+            if ((File.GetAttributes(directory) & DirectoryOrLink) != FileAttributes.Directory) return null;
+            string parents = Path.GetDirectoryName(asset.RelativePath) ?? "";
+            foreach (string segment in parents.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+            {
+                directory = Path.Combine(directory, segment);
+                if ((File.GetAttributes(directory) & DirectoryOrLink) != FileAttributes.Directory) return null;
+            }
+            if ((File.GetAttributes(path) & DirectoryOrLink) != 0) return null;
 
-            if (!ClientModManifest.IsDllSize(new FileInfo(path).Length)) throw InvalidSize(name);
+            if (!ClientModManifest.IsDllSize(new FileInfo(path).Length)) throw InvalidSize(asset.Name);
 
             var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete, 65536,
                 FileOptions.Asynchronous | FileOptions.SequentialScan);
             if (ClientModManifest.IsDllSize(file.Length)) return file;
 
             file.Dispose();
-            throw InvalidSize(name);
+            throw InvalidSize(asset.Name);
         }
         catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
         {

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -72,6 +73,27 @@ public sealed class ClientModSyncTests : IDisposable
 
         feed.Blobs[entry.Name] = correct;
         Assert.True(File.Exists(Prepare(http, "", (_, _, _) => true).ManifestPath));
+    }
+
+    [Fact]
+    public void Manifest_launch_sets_aside_legacy_gameplay_dlls_even_when_the_manifest_is_empty()
+    {
+        string mods = Directory.CreateDirectory(Path.Combine(_cache, "Mods")).FullName;
+        File.WriteAllBytes(Path.Combine(mods, "Cazacabezas.dll"), [1]);
+        File.WriteAllBytes(Path.Combine(mods, "Heroes.dll"), [2]);
+        File.WriteAllBytes(Path.Combine(mods, "Custom.dll"), [3]);
+        var client = new ClientInstallation(Path.Combine(_cache, "Dofus.exe"));
+        using var feed = new Feed();
+        using var http = new HttpClient(feed);
+        var plan = Prepare(http, "", (_, _, _) => true);
+
+        ClientModSync.Activate(client, plan, new ProcessStartInfo());
+
+        Assert.False(File.Exists(Path.Combine(mods, "Cazacabezas.dll")));
+        Assert.False(File.Exists(Path.Combine(mods, "Heroes.dll")));
+        Assert.Single(Directory.GetFiles(mods, "Cazacabezas.dll.jondo-legacy-*"));
+        Assert.Single(Directory.GetFiles(mods, "Heroes.dll.jondo-legacy-*"));
+        Assert.True(File.Exists(Path.Combine(mods, "Custom.dll")));
     }
 
     private ClientModSync.Plan Prepare(HttpClient http, string trusted,

@@ -19,19 +19,20 @@ public sealed class ClientModCatalogTests
             File.WriteAllBytes(Path.Combine(folder.FullName, "Unconfigured.dll"), [4]);
 
             string[] configured = ["Beta.dll", "Missing.dll", "Alpha.dll"];
-            ClientModManifest manifest = ClientModCatalog.CreateManifest(folder.FullName, configured);
+            var catalog = new ClientModCatalog(folder.FullName, configured);
+            ClientModManifest manifest = catalog.CreateManifest();
 
             Assert.Equal(new[] { "Beta.dll", "Alpha.dll" }, manifest.Mods.Select(mod => mod.Name));
             Assert.Equal(2, manifest.Mods[0].Size);
             Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(new byte[] { 2, 3 })), manifest.Mods[0].Sha256);
-            Assert.Null(ClientModCatalog.OpenDownload(folder.FullName, configured, "Missing.dll"));
-            Assert.Null(ClientModCatalog.OpenDownload(folder.FullName, configured, "Unconfigured.dll"));
+            Assert.Null(catalog.OpenDownload("Missing.dll"));
+            Assert.Null(catalog.OpenDownload("Unconfigured.dll"));
 
-            using var download = ClientModCatalog.OpenDownload(folder.FullName, configured, "Beta.dll");
+            using var download = catalog.OpenDownload("Beta.dll");
             Assert.NotNull(download);
             Assert.Equal(2, download.ReadByte());
 
-            ControlApi.Respuesta response = ControlApi.Mods("GET", folder.FullName, configured);
+            ControlApi.Respuesta response = ControlApi.Mods("GET", catalog);
             Assert.Equal(200, response.Codigo);
             using var body = JsonDocument.Parse(response.Json);
             JsonElement entry = body.RootElement.GetProperty("mods")[0];
@@ -39,9 +40,9 @@ public sealed class ClientModCatalogTests
             Assert.Equal(2, entry.GetProperty("size").GetInt64());
             Assert.Equal(manifest.Mods[0].Sha256, entry.GetProperty("sha256").GetString());
 
-            Assert.Empty(ClientModCatalog.CreateManifest(Path.Combine(folder.FullName, "absent"), configured).Mods);
+            Assert.Empty(new ClientModCatalog(Path.Combine(folder.FullName, "absent"), configured).CreateManifest().Mods);
             File.WriteAllBytes(Path.Combine(folder.FullName, "Empty.dll"), []);
-            Assert.Equal(503, ControlApi.Mods("GET", folder.FullName, ["Empty.dll"]).Codigo);
+            Assert.Equal(503, ControlApi.Mods("GET", new ClientModCatalog(folder.FullName, ["Empty.dll"])).Codigo);
         }
         finally
         {
@@ -58,7 +59,8 @@ public sealed class ClientModCatalogTests
     public void Download_rejects_unsafe_names_even_if_configured(string name)
     {
         Assert.False(ClientModManifest.IsDllName(name));
-        Assert.Null(ClientModCatalog.OpenDownload(Path.GetTempPath(), [name], name));
-        Assert.Equal(503, ControlApi.Mods("GET", Path.GetTempPath(), [name]).Codigo);
+        var catalog = new ClientModCatalog(Path.GetTempPath(), [name]);
+        Assert.Null(catalog.OpenDownload(name));
+        Assert.Equal(503, ControlApi.Mods("GET", catalog).Codigo);
     }
 }
