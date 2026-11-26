@@ -88,9 +88,12 @@ namespace Jondo.Unity.Server.Handlers
 
             Console.WriteLine($"[Game Node] Selected character {characterIdToLoad}.");
 
-            // Somebody's hero until now: he is played from a client of his own from here on.
-            Managers.Heroes.Release(characterIdToLoad);
+            // Release an active follower before loading the same character into the real session.
+            return Managers.Heroes.SelectCharacter(characterIdToLoad, () => LoadSelected(characterIdToLoad));
+        }
 
+        private static bool LoadSelected(long characterIdToLoad)
+        {
             // A sex change potion used last time: done now, before the character is read.
             Managers.CharacterRemodel.ApplySexChange(characterIdToLoad);
 

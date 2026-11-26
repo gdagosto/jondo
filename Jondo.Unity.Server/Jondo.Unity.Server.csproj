@@ -52,7 +52,16 @@
   <ItemGroup>
     <EmbeddedResource Include="Database/Migrations/20261112-character-colors.sql"
                       LogicalName="Jondo.Unity.Server.Database.Migrations.CharacterColors.sql" />
+    <EmbeddedResource Include="../Heroes.Server/manifest.json" LogicalName="ServerMods.Heroes.manifest.json" />
+    <ProjectReference Include="..\Heroes.Server\Heroes.Server.csproj"
+                      ReferenceOutputAssembly="false" OutputItemType="BundledHeroesAssembly" />
   </ItemGroup>
+
+  <Target Name="EmbedHeroesPackage" BeforeTargets="AssignTargetPaths" DependsOnTargets="ResolveProjectReferences">
+    <ItemGroup>
+      <EmbeddedResource Include="@(BundledHeroesAssembly)" LogicalName="ServerMods.Heroes.Heroes.Server.dll" />
+    </ItemGroup>
+  </Target>
 
   <ItemGroup>
     <ProjectReference Include="..\Jondo.Unity.Contract\Jondo.Unity.Contract.csproj" />

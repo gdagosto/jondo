@@ -242,7 +242,7 @@ namespace Jondo.Unity.Server
 
             RegressionGuardTests.Run();
 
-            await RunEmulationAsync(Paths.ServerModsDirectory, ServerSettings.Current.ServerMods, ShutdownRequested,
+            await RunEmulationAsync(Paths.ServerModsDirectory, ServerSettings.Current, ShutdownRequested,
                 RunEmulationServicesAsync, StopServices, Console.WriteLine);
 
             // The backend has stopped. Give the process a bounded time to exit.
@@ -254,13 +254,13 @@ namespace Jondo.Unity.Server
             });
         }
 
-        internal static async Task RunEmulationAsync(string modsDirectory, string[] enabledMods, Task shutdown,
+        internal static async Task RunEmulationAsync(string modsDirectory, ServerSettings settings, Task shutdown,
             Func<Mods.ServerModLoader, Task> serve, Action stopServices, Action<string> log)
         {
             if (shutdown.IsCompleted) return;
             try
             {
-                using var mods = Mods.ServerModLoader.Load(modsDirectory, enabledMods, log);
+                using var mods = Mods.ServerModLoader.LoadConfigured(modsDirectory, settings, log);
                 if (!shutdown.IsCompleted)
                     await serve(mods);
             }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Jondo.Unity.Server.Managers;
+using Jondo.Unity.ServerMods;
 
 namespace Jondo.Unity.Server.Network
 {
@@ -17,6 +18,25 @@ namespace Jondo.Unity.Server.Network
     /// </remarks>
     public static partial class ControlApi
     {
+        internal static ServerModControlResponse HandleHeroes(HeroesControlOperation operation, AuthenticatedControlRequest request)
+        {
+            var (account, _, body) = request;
+            var reply = operation switch
+            {
+                HeroesControlOperation.List => HeroesList(account),
+                HeroesControlOperation.Portrait => HeroesPortrait(body, account),
+                HeroesControlOperation.Quests => HeroesQuestSync(body, account),
+                HeroesControlOperation.AutoPass => HeroesAutoPass(body, account),
+                HeroesControlOperation.Loot => HeroesLootTo(body, account),
+                HeroesControlOperation.Sheet => HeroesSheet(body, account),
+                HeroesControlOperation.Create => HeroesCreate(body, account),
+                HeroesControlOperation.Name => HeroesName(account),
+                HeroesControlOperation.Preview => HeroesPreview(body),
+                _ => throw new ArgumentOutOfRangeException(nameof(operation)),
+            };
+            return new(reply.Codigo, reply.Json);
+        }
+
         private static Respuesta HeroesList(long account)
         {
             var me = InTheWorld(account);
@@ -107,6 +127,7 @@ namespace Jondo.Unity.Server.Network
             var (id, why) = Handlers.CharacterCreationHandler.Make(account, me.ServerId, name, (int)Numero(cuerpo, "breed"),
                                                                     (int)Numero(cuerpo, "sex"), (int)Numero(cuerpo, "head"), colors);
             if (id == 0) return Mal(409, why);
+            using var turn = me.EnterTurnAsync().GetAwaiter().GetResult();
             string connected = Heroes.Connect(me, id);
             Console.WriteLine($"[Heroes] {me.State.CharacterName} makes {name} ({id}) from the window; connected: {connected}.");
             return Bien(new { id, connected = connected == "ok", why = connected });
@@ -243,21 +264,6 @@ namespace Jondo.Unity.Server.Network
             });
         }
 
-        /// <summary>
-        /// A hero taken in hand at once, in the same connection (HeroSwitch); with { later: 1 },
-        /// at the client's next character list instead (Heroes.AskSwitch).
-        /// </summary>
-        private static Respuesta HeroesSwitch(string cuerpo, long account)
-        {
-            var me = InTheWorld(account);
-            if (me == null) return Mal(409, "world");
-            long id = Numero(cuerpo, "id");
-            if (Numero(cuerpo, "later") != 0)
-                return Heroes.AskSwitch(me, id) ? Bien(new { switching = true }) : Mal(409, "none");
-            string result = HeroSwitch.SwitchAsync(me, id).GetAwaiter().GetResult();
-            return result == "ok" ? Bien(new { switched = true }) : Mal(409, result);
-        }
-
         private static Respuesta HeroesAutoPass(string cuerpo, long account)
         {
             var me = InTheWorld(account);
@@ -283,24 +289,6 @@ namespace Jondo.Unity.Server.Network
             if (me == null) return Mal(409, "world");
             long masterId = me.State.CharacterId;
             return Heroes.SetLootTo(masterId, Numero(cuerpo, "id")) ? Bien(new { lootTo = Heroes.LootTo(masterId) }) : Mal(409, "none");
-        }
-
-        private static Respuesta HeroesConnect(string cuerpo, long account)
-        {
-            var me = InTheWorld(account);
-            if (me == null) return Mal(409, "world");
-            string result = Heroes.Connect(me, Numero(cuerpo, "id"));
-            return result == "ok" ? Bien(new { connected = true }) : Mal(409, result);
-        }
-
-        private static Respuesta HeroesDisconnect(string cuerpo, long account)
-        {
-            var me = InTheWorld(account);
-            if (me == null) return Mal(409, "world");
-            using var turn = me.EnterTurnAsync().GetAwaiter().GetResult();
-            return Heroes.Disconnect(me.State.CharacterId, Numero(cuerpo, "id"))
-                ? Bien(new { disconnected = true })
-                : Mal(409, "none");
         }
 
         /// <summary>One of the account's characters drawn as the launcher draws them, as a PNG in base64.</summary>

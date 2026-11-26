@@ -649,25 +649,11 @@ namespace Jondo.Unity.Server.Handlers
             else Parties.Refuse(party, heroId);
         }
 
-        /// <summary>A master going from his party -- leaving it, put out, changing character --: his heroes out first.</summary>
-        private static async Task HeroesOutAsync(Managers.Parties.Party party, long masterId)
-        {
-            foreach (var hero in Heroes.Of(masterId))
-                if (Parties.Of(hero.CharacterId) == party) await PutOutAsync(party, hero.CharacterId);
-        }
+        private static Task HeroesOutAsync(Managers.Parties.Party party, long masterId)
+            => Heroes.Gameplay?.LeavePartyAsync(party.Id, masterId) ?? Task.CompletedTask;
 
-        /// <summary>His heroes into the party he stands in now, or one of their own around him.</summary>
-        private static async Task HeroesBackAsync(GameSession? master)
-        {
-            if (master == null) return;
-            foreach (var hero in Heroes.Of(master.State.CharacterId))
-            {
-                var theirs = Parties.Of(hero.CharacterId);
-                if (theirs != null && theirs == Parties.Of(master.State.CharacterId)) continue;
-                if (theirs != null) await HeroLeftAsync(hero.CharacterId);
-                await HeroJoinedAsync(master, hero.CharacterId);
-            }
-        }
+        private static Task HeroesBackAsync(GameSession? master)
+            => master == null ? Task.CompletedTask : Heroes.Gameplay?.JoinPartyAsync(master) ?? Task.CompletedTask;
 
         /// <summary>Whether the party a character is in is his and his heroes' alone.</summary>
         private static bool OnlyHisHeroes(long characterId)
@@ -689,7 +675,7 @@ namespace Jondo.Unity.Server.Handlers
         }
 
         /// <summary>
-        /// A hero taken in hand (Network.HeroSwitch), the party held through it: it stays as it was,
+        /// A hero taken in hand (Heroes package), the party held through it: it stays as it was,
         /// the same characters, the one played now among them. Whoever of the
         /// group did not come back goes from it; the one played takes the lead the character he
         /// was had (a hero leads nobody), and his client, which a selection empties, is given the

@@ -4,6 +4,7 @@ using Jondo.Unity.Protocol;
 using Jondo.Unity.Server;
 using Jondo.Unity.Server.Handlers;
 using Jondo.Unity.Server.Managers;
+using Jondo.Unity.Server.Mods;
 using Jondo.Unity.Server.Network;
 using Jondo.Unity.Tests.Economy;
 using Microsoft.Data.Sqlite;
@@ -11,7 +12,7 @@ using Xunit;
 
 namespace Jondo.Unity.Tests.Movement;
 
-[Collection("MapManager")]
+[Collection("Heroes gameplay")]
 public sealed class ZaapDiscoveryTests
 {
     [Fact]
@@ -83,6 +84,8 @@ public sealed class ZaapDiscoveryTests
     [Fact]
     public async Task A_hero_beside_his_master_discovers_the_zaap_with_him()
     {
+        using var package = ServerModLoader.Load(
+            Path.Combine(AppContext.BaseDirectory, "ServerModFixtures"), ["heroes"], Console.WriteLine);
         const long master = 8_861_100_011, hero = 8_861_100_012, stranger = 8_861_100_013;
         MapManager.Initialize();
         Interactives.Initialize();
@@ -112,16 +115,15 @@ public sealed class ZaapDiscoveryTests
             Assert.Empty(ZaapDiscoveries.KnownMaps(hero));
 
             await using var pipe = await ClientPipe.OpenAsync(master, master, zaap);
-            var follower = new Heroes.Hero { CharacterId = hero, MasterId = master, Session = GameSession.SinSocket() };
-            follower.Session.State.CharacterId = hero;
-            await HeroPresence.ArriveAsync(pipe.Session, follower);
+            Assert.Equal("ok", Heroes.Connect(pipe.Session, hero));
 
-            Assert.Equal(zaap, follower.Session.State.MapId);
+            Assert.Equal(zaap, Heroes.SessionOf(hero)?.MapId);
             Assert.Equal(zaap, Assert.Single(ZaapDiscoveries.KnownMaps(hero)));
             Assert.Empty(ZaapDiscoveries.KnownMaps(stranger));
         }
         finally
         {
+            Heroes.DisconnectAll(master);
             settings.RequireZaapDiscovery = previous;
             using var delete = database.CreateCommand();
             delete.CommandText = """

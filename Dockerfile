@@ -23,6 +23,7 @@ COPY Jondo.Unity.Protocol.Game.Wire/Jondo.Unity.Protocol.Game.Wire.csproj Jondo.
 COPY Jondo.Unity.ProtocolGenerator/Jondo.Unity.ProtocolGenerator.csproj Jondo.Unity.ProtocolGenerator/
 COPY Jondo.Unity.World/Jondo.Unity.World.csproj Jondo.Unity.World/
 COPY Jondo.Unity.Sprites/Jondo.Unity.Sprites.csproj Jondo.Unity.Sprites/
+COPY Heroes.Server/Heroes.Server.csproj Heroes.Server/
 COPY Jondo.Unity.Server/Jondo.Unity.Server.csproj Jondo.Unity.Server/
 RUN dotnet restore Jondo.Unity.Server/Jondo.Unity.Server.csproj -r linux-x64
 

@@ -12,6 +12,8 @@ namespace Jondo.Unity.Server.Mods;
 internal sealed class ServerModLoader(Action<string> log) : IDisposable
 {
     private const string ManifestFile = "manifest.json";
+    private const string HeroesId = "heroes";
+    private const string BundledHeroesPrefix = "ServerMods.Heroes.";
     private static readonly Regex ModId = new(@"\A[A-Za-z0-9][A-Za-z0-9._-]*\z", RegexOptions.CultureInvariant);
     private readonly Stack<Host> _started = new();
     private int _stopped;
@@ -21,7 +23,20 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
     public ClientModCatalog.Asset[] ClientAssets => _started.Reverse().Select(host => host.ClientAsset)
         .OfType<ClientModCatalog.Asset>().ToArray();
 
+    internal static ServerModLoader LoadConfigured(string directory, ServerSettings settings, Action<string> log)
+    {
+        var enabledIds = settings.HeroMode
+            ? settings.ServerMods.Append(HeroesId)
+            : settings.ServerMods.Where(id => !IsHeroes(id));
+        return Load(directory, enabledIds.ToArray(), log, bundleHeroes: settings.HeroMode);
+    }
+
+    private static bool IsHeroes(string id) => string.Equals(id, HeroesId, StringComparison.OrdinalIgnoreCase);
+
     public static ServerModLoader Load(string directory, string[] enabledIds, Action<string> log)
+        => Load(directory, enabledIds, log, bundleHeroes: false);
+
+    private static ServerModLoader Load(string directory, string[] enabledIds, Action<string> log, bool bundleHeroes)
     {
         var loader = new ServerModLoader(log);
         if (enabledIds.Length == 0) return loader;
@@ -30,7 +45,7 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
         {
             var packages = Discover(directory, enabledIds[0], log);
             foreach (string id in enabledIds.Distinct(StringComparer.OrdinalIgnoreCase))
-                loader.StartPackage(directory, packages, id);
+                loader.StartPackage(directory, packages, id, bundleHeroes);
             return loader;
         }
         catch
@@ -94,7 +109,8 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
             StringComparer.OrdinalIgnoreCase);
     }
 
-    private void StartPackage(string directory, ILookup<string, (string Directory, JsonElement Manifest)> packages, string id)
+    private void StartPackage(string directory, ILookup<string, (string Directory, JsonElement Manifest)> packages,
+        string id, bool bundleHeroes)
     {
         Host host = null;
         try
@@ -102,14 +118,24 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
             if (id == null || !ModId.IsMatch(id))
                 throw new InvalidDataException("Invalid ID in the ServerMods setting.");
             var matches = packages[id].ToArray();
-            if (matches.Length == 0)
+            bool bundled = matches.Length == 0 && bundleHeroes && IsHeroes(id);
+            if (matches.Length == 0 && !bundled)
                 throw new InvalidDataException($"No package with this ID was found in '{directory}'.");
             if (matches.Length > 1)
                 throw new InvalidDataException($"Duplicate mod ID in packages: {string.Join(", ", matches.Select(match => Path.GetFileName(match.Directory)))}.");
 
-            var (package, manifestJson) = matches[0];
-            var manifest = manifestJson.Deserialize<Manifest>();
-            string label = $"{Path.GetFileName(package)} ({manifest.Id})";
+            string package = bundled ? null : matches[0].Directory;
+            Manifest manifest;
+            if (bundled)
+            {
+                using var manifestStream = OpenBundledHeroesFile(ManifestFile);
+                manifest = JsonSerializer.Deserialize<Manifest>(manifestStream);
+            }
+            else
+            {
+                manifest = matches[0].Manifest.Deserialize<Manifest>();
+            }
+            string label = bundled ? $"bundled ({manifest.Id})" : $"{Path.GetFileName(package)} ({manifest.Id})";
             host = new Host(log, label, ControlRoutes);
             var mod = LoadPackage(package, manifest, host, out string? clientPath);
             mod.Initialize(host);
@@ -136,6 +162,15 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
         if (manifest.ServerApiVersion != ServerModApi.Version)
             throw new InvalidDataException($"Expected 'serverApiVersion' {ServerModApi.Version}, got {manifest.ServerApiVersion}.");
 
+        if (package == null)
+        {
+            using var stream = OpenBundledHeroesFile(manifest.ServerAssembly);
+            var bundledContext = new PackageLoadContext(null, null, null);
+            host.RegisterCleanup(bundledContext.Unload);
+            clientPath = null;
+            return CreateMod(bundledContext.LoadFromStream(stream));
+        }
+
         string assemblyPath = RequirePackageFile(package, manifest.ServerAssembly, "serverAssembly");
         clientPath = manifest.ClientAsset == null ? null : RequirePackageFile(package, manifest.ClientAsset, "clientAsset");
         if (string.Equals(clientPath, assemblyPath, StringComparison.OrdinalIgnoreCase))
@@ -144,7 +179,16 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
         RejectLink(Path.ChangeExtension(assemblyPath, ".deps.json"));
         var context = new PackageLoadContext(package, assemblyPath, clientPath);
         host.RegisterCleanup(context.Unload);
-        var entryPoints = context.LoadPackageAssembly(assemblyPath).GetExportedTypes()
+        return CreateMod(context.LoadPackageAssembly(assemblyPath));
+    }
+
+    private static Stream OpenBundledHeroesFile(string name)
+        => typeof(ServerModLoader).Assembly.GetManifestResourceStream(BundledHeroesPrefix + name)
+           ?? throw new FileNotFoundException($"Bundled Heroes package file '{name}' was not found.");
+
+    private static IServerMod CreateMod(Assembly assembly)
+    {
+        var entryPoints = assembly.GetExportedTypes()
             .Where(type => type.IsClass && !type.IsAbstract && !type.ContainsGenericParameters &&
                            typeof(IServerMod).IsAssignableFrom(type) && type.GetConstructor(Type.EmptyTypes) != null)
             .ToArray();
@@ -203,7 +247,7 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
         [property: JsonPropertyName("clientAsset")] string ClientAsset);
 
     private sealed class Host(Action<string> log, string label, ServerModControlRoutes controlRoutes)
-        : IServerModHost, IHuntModHost
+        : IServerModHost, IHuntModHost, IHeroesControl, IHeroesModHost
     {
         private readonly Stack<Action> _cleanup = new();
         private bool _stopping;
@@ -223,6 +267,20 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
         }
 
         IHuntWorld IHuntModHost.World { get; } = new HuntWorld();
+
+        ServerModControlResponse IHeroesControl.Handle(HeroesControlOperation operation, AuthenticatedControlRequest request)
+            => ControlApi.HandleHeroes(operation, request);
+
+        IHeroesWorld IHeroesModHost.HeroesWorld { get; } = new HeroesWorld();
+
+        void IHeroesModHost.RegisterHeroesGameplay(IHeroesGameplay gameplay)
+        {
+            lock (_cleanup)
+            {
+                if (_stopping) throw new InvalidOperationException("The server mod is stopping.");
+                _cleanup.Push(Managers.Heroes.Register(gameplay));
+            }
+        }
 
         void IHuntModHost.RegisterHuntGameplay(IHuntGameplay gameplay)
         {
@@ -262,7 +320,7 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
     private sealed class PackageLoadContext(string package, string assemblyPath, string? clientPath) : AssemblyLoadContext(isCollectible: true)
     {
         private static readonly Assembly ContractAssembly = typeof(IServerMod).Assembly;
-        private readonly AssemblyDependencyResolver _resolver = new(assemblyPath);
+        private readonly AssemblyDependencyResolver _resolver = assemblyPath == null ? null : new(assemblyPath);
 
         public Assembly LoadPackageAssembly(string path)
         {
@@ -275,6 +333,8 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
         {
             if (string.Equals(name.Name, ContractAssembly.GetName().Name, StringComparison.OrdinalIgnoreCase))
                 return ContractAssembly;
+
+            if (_resolver == null) return null;
 
             string path = _resolver.ResolveAssemblyToPath(name);
             if (path == null && string.IsNullOrEmpty(name.CultureName))

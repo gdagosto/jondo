@@ -9,11 +9,10 @@ most: the window has eight places with the master).
 
 ## How a hero exists
 
-`Managers/Heroes.cs`. A hero has no client: his character is loaded into a session with no socket
-(`GameSession.SinSocket`, `CharacterSelectionHandler.LoadForHero`) -- his sheet, bag and gear, as a
-selection loads them. That session is in no registry: nothing is sent to it, no map draws it, and a
-fight's people (`Publico`) leave it out. Everything written against a session's state reads and
-writes the hero's when run inside it.
+`Heroes.Server/HeroGroups.cs` owns the active group. The host loads each follower's sheet, bag
+and gear into a socketless session using `CharacterSelectionHandler.LoadForHero`. The package
+holds that session and the host uses it for the follower's character state. Only client
+connections are in the host's session registry.
 
 - **Connect**: a character of the master's account, not the master, not played from a client of its
   own, not somebody's hero already, under the limit, and the master not in a fight.
@@ -23,7 +22,7 @@ writes the hero's when run inside it.
 
 ## On the map, and in the world for the others
 
-`Network/HeroPresence.cs`. A connected hero stands on his master's map, on a free walkable cell
+`HeroGroups.World.cs` manages following and `HeroesWorld` sends the actor updates. A connected hero stands on his master's map, on a free walkable cell
 beside him, and is drawn for everybody there: every map's actor list carries the heroes of the
 people on it (`ConnectionProtocol.BuildMapActors`), a hero connecting is drawn (jsn) and one let go
 taken off (kmu). He walks after his master -- the master's own walk, the first hero stopping one step
@@ -48,7 +47,7 @@ master is free to answer: that party is let go, and his heroes come back into wh
 (accepting, turning down, the invitation withdrawn). Leaving a party, or put out of it, he takes his
 heroes into one of their own around him. The leader putting out a hero of his own lets that hero go.
 Taking a hero in hand leaves the party as it is: the same characters stay in it --
-let go and taken back without it being told (`Heroes.HoldParty`) --, the one played takes the lead
+let go and taken back without it being told (held by the Heroes package) --, the one played takes the lead
 the other had, and his client is given the party again (`PartyHandler.SwitchedAsync`).
 
 The game's own «follow the leader» cannot move a hero (no client to walk): `HeroPresence` does.
@@ -161,7 +160,7 @@ that open his bag, his characteristics and his spells, to look at (`POST /api/he
 ids from the server, named and drawn by the client's own data (`DataCenterModule`, its icon tiles).
 
 **Taking a hero in hand** (the panel's **PLAY**, or Tab) happens at once, in the same connection:
-`POST /api/heroes/switch { id }` (`HeroSwitch`). The master is saved and taken off his map, the hero
+`POST /api/heroes/switch { id }` (Heroes package). The master is saved and taken off his map, the hero
 selected into the same session where the master stood, and the client sent, mid-session, the burst
 a selection sends (the «character selected» with the hero's id, his sheet, bag, spells and
 shortcuts); it takes a second selection while in the world. The map is not loaded again: the actor
@@ -188,7 +187,9 @@ within the three minutes brings the group back the same way.
 | `POST /api/heroes/autopass` `{ id, on }` | a hero's turns passed on their own, or not |
 | `POST /api/heroes/loot` `{ id }` | the group's items to him; the same one again, back to each his own |
 
-All need the master in the world (`409 world`), with the session's own token.
+Every route requires the session's own token (`401 sesion`). Name suggestions, previews and owned
+portraits can be requested without a character in the world. The other routes require an active
+character (`409 world`). Turning Hero mode off removes the routes (`404 ruta`) after restart.
 
 ## Not yet
 

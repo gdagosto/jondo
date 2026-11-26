@@ -103,7 +103,7 @@ namespace Jondo.Unity.Server
         /// <summary>Client mods to serve, in their configured load order.</summary>
         public string[] ClientMods { get; set; } = ["JondoFix.dll", "Cazacabezas.dll", "Heroes.dll"];
 
-        /// <summary>Enabled server mod manifest IDs, in startup order. Set in the file.</summary>
+        /// <summary>Server mod manifest IDs in startup order. Heroes is enabled by its own setting.</summary>
         public string[] ServerMods { get; set; } = [];
 
         public HeroesModSettings Heroes { get; set; } = new();

@@ -5,6 +5,7 @@ using Jondo.Unity.Protocol;
 using Jondo.Unity.Server;
 using Jondo.Unity.Server.Handlers;
 using Jondo.Unity.Server.Managers;
+using Jondo.Unity.Server.Mods;
 using Jondo.Unity.Server.Network;
 using Jondo.Unity.Tests.Economy;
 using Jondo.Unity.World.Fights;
@@ -21,9 +22,14 @@ namespace Jondo.Unity.Tests.World
     /// With the item and equipment tests: connecting a hero loads his bag and what he wears
     /// (Equipment), which they read too.
     /// </remarks>
-    [Collection("forgemagic")]
-    public sealed class HeroesTests
+    [Collection("Heroes gameplay")]
+    public sealed class HeroesTests : IDisposable
     {
+        private readonly ServerModLoader _heroes = ServerModLoader.LoadConfigured(
+            Path.Combine(AppContext.BaseDirectory, "ServerModFixtures", "absent"), new ServerSettings(), Console.WriteLine);
+
+        public void Dispose() => _heroes.Dispose();
+
         private const long Account = 8_900_000_311;
         /// <summary>
         /// A map of these tests' own, no other test's connection on it: a hero connecting is drawn
@@ -227,7 +233,10 @@ namespace Jondo.Unity.Tests.World
             try
             {
                 Assert.Equal("ok", Heroes.Connect(pipe.Session, hero));
-                Heroes.Release(hero);
+                await using var selected = await ClientPipe.OpenAsync(Account, 0, Map, enterWorld: false);
+                using (SessionContext.Push(selected.Session))
+                    Assert.True(CharacterSelectionHandler.SelectCharacterOnServer(hero, selected.Session));
+                Assert.Equal(hero, selected.Session.CharacterId);
                 Assert.Empty(Heroes.Of(master));
             }
             finally
@@ -397,8 +406,8 @@ namespace Jondo.Unity.Tests.World
                 var party = Parties.Of(master);
                 Assert.NotNull(party);
 
-                Assert.Equal("hero", await HeroSwitch.SwitchAsync(pipe.Session, master + 999));
-                Assert.Equal("ok", await HeroSwitch.SwitchAsync(pipe.Session, hero));
+                Assert.Equal("hero", await Heroes.Gameplay!.SwitchAsync(pipe.Session, master + 999));
+                Assert.Equal("ok", await Heroes.Gameplay!.SwitchAsync(pipe.Session, hero));
 
                 // The same party: nobody out of it, the one played now leading it.
                 Assert.Same(party, Parties.Of(hero));
@@ -417,9 +426,9 @@ namespace Jondo.Unity.Tests.World
                 Assert.Null(Heroes.AsHero(hero));
 
                 // The first hero taken in hand each time, as Tab does, goes round them all.
-                Assert.Equal("ok", await HeroSwitch.SwitchAsync(pipe.Session, other));
+                Assert.Equal("ok", await Heroes.Gameplay!.SwitchAsync(pipe.Session, other));
                 Assert.Equal(new[] { master, hero }, Heroes.Of(other).Select(h => h.CharacterId));
-                Assert.Equal("ok", await HeroSwitch.SwitchAsync(pipe.Session, master));
+                Assert.Equal("ok", await Heroes.Gameplay!.SwitchAsync(pipe.Session, master));
                 Assert.Equal(new[] { hero, other }, Heroes.Of(master).Select(h => h.CharacterId));
                 Assert.Same(party, Parties.Of(master));
                 Assert.Equal(master, party.LeaderId);
@@ -467,7 +476,7 @@ namespace Jondo.Unity.Tests.World
                 Assert.Equal("ok", Heroes.Connect(pipe.Session, hero));
 
                 int before = codec.Frames.Count;
-                Assert.Equal("ok", await HeroSwitch.SwitchAsync(pipe.Session, hero));
+                Assert.Equal("ok", await Heroes.Gameplay!.SwitchAsync(pipe.Session, hero));
 
                 var journal = Assert.Single(codec.Frames.Skip(before).Select(f => f.Content).OfType<Jondo.Unity.Protocol.Game.QuestsEvent>());
                 Assert.Contains(journal.ActiveQuests, quest => quest.QuestId == 1648);
@@ -520,7 +529,7 @@ namespace Jondo.Unity.Tests.World
                 Assert.Equal("ok", Heroes.Connect(pipe.Session, hero));
 
                 int before = codec.Frames.Count;
-                Assert.Equal("ok", await HeroSwitch.SwitchAsync(pipe.Session, hero));
+                Assert.Equal("ok", await Heroes.Gameplay!.SwitchAsync(pipe.Session, hero));
 
                 var sent = codec.Frames.Skip(before).Select(f => f.Content).ToList();
                 var box = Assert.Single(sent.OfType<Jondo.Unity.Protocol.Game.QuestsFollowedEvent>());

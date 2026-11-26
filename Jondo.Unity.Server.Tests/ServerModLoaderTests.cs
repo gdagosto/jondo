@@ -44,7 +44,7 @@ public sealed class ServerModLoaderTests : IDisposable
         Assert.DoesNotContain(AssemblyLoadContext.Default.Assemblies,
             assembly => assembly.GetName().Name is "Fixture.ServerMod" or "Fixture.ServerModDependency");
         Assert.DoesNotContain(typeof(ServerModLoader).Assembly.GetReferencedAssemblies(),
-            assembly => assembly.Name is "Fixture.ServerMod" or "Fixture.ServerModDependency" or "Cazacabezas" or "Heroes");
+            assembly => assembly.Name is "Fixture.ServerMod" or "Fixture.ServerModDependency" or "Cazacabezas" or "Heroes" or "Heroes.Server");
     }
 
     [Fact]
@@ -194,17 +194,19 @@ public sealed class ServerModLoaderTests : IDisposable
     }
 
     [Fact]
-    public async Task EmptySettingsStartWithNoPackageDirectory()
+    public async Task DefaultSettingsLoadBundledHeroesWithNoPackageDirectory()
     {
         string missingRoot = Path.Combine(_root.FullName, "server-mods");
-        await Program.RunEmulationAsync(missingRoot, ServerSettings.Read("{}").ServerMods,
-            new TaskCompletionSource().Task, _ =>
+        await Program.RunEmulationAsync(missingRoot, ServerSettings.Read("{}"),
+            new TaskCompletionSource().Task, mods =>
             {
+                Assert.True(mods.ControlRoutes.TryGet("/api/heroes/list", out _));
+                Assert.Empty(mods.ClientAssets);
                 _messages.Add("ready");
                 return Task.CompletedTask;
             }, () => _messages.Add("host stopped"), _messages.Add);
 
-        Assert.Equal(["ready", "host stopped"], _messages);
+        Assert.Equal(["[Server mods] bundled (heroes) initialized (version 1.0.0).", "ready", "host stopped"], _messages);
 
         var failure = Assert.Throws<InvalidOperationException>(() =>
             ServerModLoader.Load(missingRoot, ["fixture.uninstalled"], _messages.Add));
@@ -217,10 +219,10 @@ public sealed class ServerModLoaderTests : IDisposable
         InstallFixture("z-first");
         InstallFixture("a-second");
         InstallFixture("disabled");
-        var settings = ServerSettings.Read("""{"ServerMods":["fixture.z-first","FIXTURE.A-SECOND"]}""");
+        var settings = ServerSettings.Read("""{"HeroMode":false,"ServerMods":["fixture.z-first","FIXTURE.A-SECOND"]}""");
         var shutdown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        Task run = Program.RunEmulationAsync(_root.FullName, settings.ServerMods, shutdown.Task, _ =>
+        Task run = Program.RunEmulationAsync(_root.FullName, settings, shutdown.Task, _ =>
         {
             _messages.Add("ready");
             return shutdown.Task;
@@ -257,7 +259,8 @@ public sealed class ServerModLoaderTests : IDisposable
         InstallFixture("later");
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            Program.RunEmulationAsync(_root.FullName, ["fixture.first", "fixture.broken", "fixture.later"],
+            Program.RunEmulationAsync(_root.FullName,
+                new ServerSettings { HeroMode = false, ServerMods = ["fixture.first", "fixture.broken", "fixture.later"] },
                 new TaskCompletionSource().Task, _ => throw new Xunit.Sdk.XunitException("Listeners started"),
                 () => _messages.Add("host stopped"), _messages.Add));
 
@@ -282,7 +285,8 @@ public sealed class ServerModLoaderTests : IDisposable
     {
         InstallFixture("first");
         var shutdown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await Program.RunEmulationAsync(_root.FullName, ["fixture.first"], shutdown.Task,
+        await Program.RunEmulationAsync(_root.FullName,
+            new ServerSettings { HeroMode = false, ServerMods = ["fixture.first"] }, shutdown.Task,
             _ => throw new Xunit.Sdk.XunitException("Listeners started"), () => _messages.Add("host stopped"),
             message =>
             {

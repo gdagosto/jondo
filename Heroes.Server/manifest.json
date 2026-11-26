@@ -1,0 +1,6 @@
+{
+  "id": "heroes",
+  "version": "1.0.0",
+  "serverApiVersion": 1,
+  "serverAssembly": "Heroes.Server.dll"
+}

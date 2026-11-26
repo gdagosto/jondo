@@ -25,6 +25,8 @@ Existing standalone `Cazacabezas.dll` and `Heroes.dll` still load when listed in
 ## Enable packages
 
 Add the manifest IDs to `ServerMods` in `config/server_settings.json`, alongside the other server settings.
+The Heroes package is selected by `Heroes.Enabled` (default `true`). The server loads its bundled
+copy when there is no installed package with ID `heroes`.
 
 ```json
 {
