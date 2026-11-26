@@ -19,4 +19,11 @@ public interface IServerModHost
 
     /// <summary>Registers cleanup for a resource, including when initialization fails.</summary>
     void RegisterCleanup(Action cleanup);
+
+    /// <summary>Registers an exact control API path. The host resolves the account before calling the handler.</summary>
+    void RegisterAuthenticatedControlRoute(string path, Func<AuthenticatedControlRequest, ServerModControlResponse> handler);
 }
+
+public readonly record struct AuthenticatedControlRequest(long AccountId, string Method, string Body);
+
+public readonly record struct ServerModControlResponse(int StatusCode, string Json);

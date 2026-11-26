@@ -282,7 +282,7 @@ namespace Jondo.Unity.Server
                                       "a trusted network or behind a VPN/tunnel.");
                 }
                 var clientMods = new ClientModCatalog(Paths.ClientModsDirectory, ServerSettings.Current.ClientMods, mods.ClientAssets);
-                HaapiServer.Start(haapiPort, clientMods);
+                HaapiServer.Start(haapiPort, clientMods, mods.ControlRoutes);
                 ZaapServer.Start(port);
                 GameServerProxy.Start(gamePort);
                 GameNodeProxy.Start(gameNodePort);

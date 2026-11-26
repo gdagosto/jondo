@@ -6,6 +6,8 @@ using System.Linq;
 using System.Text.Json;
 using Jondo.Unity.Protocol;
 using Jondo.Unity.Server.Handlers;
+using Jondo.Unity.Server.Mods;
+using Jondo.Unity.ServerMods;
 
 namespace Jondo.Unity.Server.Network
 {
@@ -58,7 +60,8 @@ namespace Jondo.Unity.Server.Network
         public static Respuesta? Responder(string ruta, string metodo, string cuerpo, string ip = "")
             => Responder(ruta, metodo, cuerpo, ip, null);
 
-        internal static Respuesta? Responder(string ruta, string metodo, string cuerpo, string ip, ClientModCatalog? clientMods)
+        internal static Respuesta? Responder(string ruta, string metodo, string cuerpo, string ip,
+            ClientModCatalog? clientMods, ServerModControlRoutes? modRoutes = null)
         {
             if (!ruta.StartsWith(Prefijo, StringComparison.Ordinal)) return null;
 
@@ -87,11 +90,6 @@ namespace Jondo.Unity.Server.Network
                     case Prefijo + "lanzamiento": return ConSesion(cuerpo, cuenta => Lanzamiento(cuerpo, cuenta, ip));
                     case Prefijo + "fin-de-lanzamiento":
                         return ConSesion(cuerpo, cuenta => FinDeLanzamiento(cuerpo, cuenta));
-                    // The Cazacabezas mod's window: his own hunter's record, board and order.
-                    case Prefijo + "headhunts/status": return ConSesion(cuerpo, HeadHuntStatus);
-                    case Prefijo + "headhunts/board": return ConSesion(cuerpo, HeadHuntBoard);
-                    case Prefijo + "headhunts/take": return ConSesion(cuerpo, cuenta => HeadHuntTake(cuerpo, cuenta));
-                    case Prefijo + "headhunts/abandon": return ConSesion(cuerpo, HeadHuntAbandon);
                     // The Heroes mod's window: his account's characters, connected beside him or not.
                     case Prefijo + "heroes/list": return ConSesion(cuerpo, HeroesList);
                     case Prefijo + "heroes/connect": return ConSesion(cuerpo, cuenta => HeroesConnect(cuerpo, cuenta));
@@ -138,7 +136,16 @@ namespace Jondo.Unity.Server.Network
                             : ConRol(cuerpo, Roles.Administrador,
                                 cuenta => AdministrarPersonaje(cuerpo, cuenta));
 
-                    default: return Mal(404, "ruta");
+                    default:
+                        if (modRoutes != null && modRoutes.TryGet(ruta, out var handle))
+                        {
+                            return ConSesion(cuerpo, accountId =>
+                            {
+                                var reply = handle(new AuthenticatedControlRequest(accountId, metodo, cuerpo));
+                                return new Respuesta(reply.StatusCode, reply.Json);
+                            });
+                        }
+                        return Mal(404, "ruta");
                 }
             }
             catch (Exception ex)
@@ -179,6 +186,10 @@ namespace Jondo.Unity.Server.Network
             if (cuenta <= 0) return Mal(401, "sesion");
             return hacer(cuenta);
         }
+
+        /// <summary>The account's character in the world, or null.</summary>
+        internal static GameSession? InTheWorld(long account)
+            => SessionRegistry.All().FirstOrDefault(s => s.AccountId == account && s.IsInWorld && s.HasCharacter);
 
         private static Respuesta ConRol(string cuerpo, int haceFalta, Func<long, Respuesta> hacer)
         {

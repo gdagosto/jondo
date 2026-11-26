@@ -1,11 +1,16 @@
 using System;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Net.Sockets;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Jondo.Unity.Protocol;
 using Jondo.Unity.Server;
 using Jondo.Unity.Server.Handlers;
 using Jondo.Unity.Server.Managers;
+using Jondo.Unity.Server.Mods;
 using Jondo.Unity.Server.Network;
 using Jondo.Unity.Tests.Economy;
 using Jondo.Unity.World.Fights;
@@ -180,6 +185,22 @@ namespace Jondo.Unity.Tests.World
         [Fact]
         public async Task The_mod_asks_with_the_players_own_session()
         {
+            string packages = Path.Combine(AppContext.BaseDirectory, "ServerModFixtures");
+            using var enabled = ServerModLoader.Load(packages, ["cazacabezas"], _ => { });
+            using var disabled = ServerModLoader.Load(packages, [], _ => { });
+            var catalog = new ClientModCatalog(packages, []);
+            int port;
+            using (var probe = new TcpListener(IPAddress.Loopback, 0))
+            {
+                probe.Start();
+                port = ((IPEndPoint)probe.LocalEndpoint).Port;
+            }
+            using var listener = new HttpListener();
+            string address = $"http://localhost:{port}/";
+            listener.Prefixes.Add(address);
+            listener.Start();
+            using var http = new HttpClient { BaseAddress = new Uri(address), Timeout = TimeSpan.FromSeconds(10) };
+
             ServerSettings.UseForTests(new ServerSettings { HeadHunters = true });
             HeadHunts.Reset();
             long hunter = Create(HunterAccount, "Cazador-D", 100);
@@ -193,35 +214,61 @@ namespace Jondo.Unity.Tests.World
                 Sworn(prey, Alignments.Brakmar);
                 ClientLaunchRegistry.RegisterToken(HunterAccount, token);
                 string Body(string more = "") => "{\"token\":\"" + token + "\"" + more + "}";
-                JsonElement Ask(string route, string more = "", int expected = 200)
+                async Task<JsonElement> Send(string route, string body, int expected, ServerModControlRoutes routes,
+                    HttpMethod? method = null)
                 {
-                    var answer = ControlApi.Responder("/api/headhunts/" + route, "POST", Body(more));
-                    Assert.NotNull(answer);
-                    Assert.Equal(expected, answer!.Value.Codigo);
-                    return JsonDocument.Parse(answer.Value.Json).RootElement.Clone();
+                    using var request = new HttpRequestMessage(method ?? HttpMethod.Post, "/api/headhunts/" + route)
+                    {
+                        Content = new StringContent(body, Encoding.UTF8, "application/json"),
+                    };
+                    var pending = http.SendAsync(request);
+                    var context = await listener.GetContextAsync().WaitAsync(http.Timeout);
+                    await HaapiServer.HandleHaapiRequestAsync(context, catalog, routes).WaitAsync(http.Timeout);
+                    using var answer = await pending;
+                    Assert.Equal(expected, (int)answer.StatusCode);
+                    Assert.Equal("application/json", answer.Content.Headers.ContentType?.MediaType);
+                    using var document = JsonDocument.Parse(await answer.Content.ReadAsStringAsync());
+                    return document.RootElement.Clone();
                 }
 
-                // Without a session, nothing; without a character in the world, nothing either.
-                Assert.Equal(401, ControlApi.Responder("/api/headhunts/status", "POST", "{\"token\":\"nobody\"}")!.Value.Codigo);
-                Assert.Equal("world", Ask("status", expected: 409).GetProperty("error").GetString());
+                Task<JsonElement> Ask(string route, string more = "", int expected = 200, HttpMethod? method = null)
+                    => Send(route, Body(more), expected, enabled.ControlRoutes, method);
+
+                var noToken = await Send("status", "{}", 401, enabled.ControlRoutes);
+                Assert.Equal("sesion", noToken.GetProperty("error").GetString());
+                var badToken = await Send("status", """{"token":"nobody"}""", 401, enabled.ControlRoutes);
+                Assert.Equal("sesion", badToken.GetProperty("error").GetString());
+                Assert.Equal("world", (await Ask("status", expected: 409)).GetProperty("error").GetString());
 
                 await using var h = await ClientPipe.OpenAsync(HunterAccount, hunter, Map, "Cazador-D");
                 h.Session.State.CharacterLevel = 100;
-                var status = Ask("status");
+                var status = await Ask("status", ",\"accountId\":" + PreyAccount, method: HttpMethod.Put);
+                Assert.Equal("Cazador-D", status.GetProperty("character").GetString());
                 Assert.True(status.GetProperty("on").GetBoolean());
                 Assert.Equal(JsonValueKind.Null, status.GetProperty("order").ValueKind);
 
-                var board = Ask("board").GetProperty("prey").EnumerateArray().ToList();
+                var board = (await Ask("board")).GetProperty("prey").EnumerateArray().ToList();
                 Assert.Contains(board, p => p.GetProperty("id").GetInt64() == prey);
 
-                Ask("take", ",\"target\":" + prey);
-                Assert.Equal("busy", Ask("take", ",\"target\":" + prey, 409).GetProperty("error").GetString());
-                var order = Ask("status").GetProperty("order");
+                var taken = await Ask("take", ",\"target\":" + prey);
+                Assert.Equal(prey, taken.GetProperty("taken").GetInt64());
+                Assert.Equal("busy", (await Ask("take", ",\"target\":" + prey, 409)).GetProperty("error").GetString());
+                var order = (await Ask("status")).GetProperty("order");
                 Assert.Equal(prey, order.GetProperty("target").GetInt64());
                 Assert.False(order.GetProperty("open").GetBoolean());
 
-                Ask("abandon");
+                Assert.True((await Ask("abandon")).GetProperty("abandoned").GetBoolean());
                 Assert.Null(HeadHunts.OrderOf(hunter));
+
+                foreach (string route in new[] { "status", "board", "take", "abandon" })
+                {
+                    var absent = await Send(route, Body(), 404, disabled.ControlRoutes);
+                    Assert.Equal("ruta", absent.GetProperty("error").GetString());
+                }
+
+                enabled.Dispose();
+                var stopped = await Send("status", Body(), 404, enabled.ControlRoutes);
+                Assert.Equal("ruta", stopped.GetProperty("error").GetString());
             }
             finally
             {

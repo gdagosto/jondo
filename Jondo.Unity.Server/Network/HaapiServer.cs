@@ -3,6 +3,7 @@ using System.Net;
 using System.IO;
 using System.Threading.Tasks;
 using Jondo.Unity.Launcher;
+using Jondo.Unity.Server.Mods;
 
 namespace Jondo.Unity.Server.Network
 {
@@ -14,7 +15,7 @@ namespace Jondo.Unity.Server.Network
         public static void Start(int port)
             => Start(port, new ClientModCatalog(Paths.ClientModsDirectory, ServerSettings.Current.ClientMods));
 
-        internal static void Start(int port, ClientModCatalog clientMods)
+        internal static void Start(int port, ClientModCatalog clientMods, ServerModControlRoutes? modRoutes = null)
         {
             if (_isRunning) return;
             _isRunning = true;
@@ -45,7 +46,7 @@ namespace Jondo.Unity.Server.Network
                         // With a ceiling. Before, it was dispatched bare with «_ = ...», with no queue or limit,
                         // so N simultaneous requests added up their bodies in memory and their
                         // PBKDF2 in threads. The semaphore rejects nobody: it makes them wait.
-                        _ = AtenderConTechoAsync(ctx, clientMods);
+                        _ = AtenderConTechoAsync(ctx, clientMods, modRoutes);
                     }
                     catch (Exception ex)
                     {
@@ -91,10 +92,10 @@ namespace Jondo.Unity.Server.Network
         /// </remarks>
         private static readonly SemaphoreSlim _aLaVez = new SemaphoreSlim(8, 8);
 
-        private static async Task AtenderConTechoAsync(HttpListenerContext ctx, ClientModCatalog clientMods)
+        private static async Task AtenderConTechoAsync(HttpListenerContext ctx, ClientModCatalog clientMods, ServerModControlRoutes? modRoutes)
         {
             await _aLaVez.WaitAsync();
-            try { await HandleHaapiRequestAsync(ctx, clientMods); }
+            try { await HandleHaapiRequestAsync(ctx, clientMods, modRoutes); }
             finally { _aLaVez.Release(); }
         }
 
@@ -122,7 +123,8 @@ namespace Jondo.Unity.Server.Network
             return (req.ContentEncoding ?? System.Text.Encoding.UTF8).GetString(acumulado.ToArray());
         }
 
-        internal static async Task HandleHaapiRequestAsync(HttpListenerContext ctx, ClientModCatalog clientMods)
+        internal static async Task HandleHaapiRequestAsync(HttpListenerContext ctx, ClientModCatalog clientMods,
+            ServerModControlRoutes? modRoutes = null)
         {
             var req = ctx.Request;
             var resp = ctx.Response;
@@ -184,7 +186,7 @@ namespace Jondo.Unity.Server.Network
                 return;
             }
 
-            var deControl = ControlApi.Responder(path, req.HttpMethod, body, clientIp, clientMods);
+            var deControl = ControlApi.Responder(path, req.HttpMethod, body, clientIp, clientMods, modRoutes);
             if (deControl != null)
             {
                 byte[] cuerpo = System.Text.Encoding.UTF8.GetBytes(deControl.Value.Json);

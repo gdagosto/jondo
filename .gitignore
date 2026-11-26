@@ -8,6 +8,7 @@
 publish/
 runtimes/
 /host-artifacts/
+/server-mods/cazacabezas/
 .avalonia-build-tasks/
 *.pdb
 *.deps.json

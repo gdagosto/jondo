@@ -43,3 +43,9 @@ Use `host.RegisterCleanup(Action)` immediately after acquiring a resource so its
 The server supplies its own `Jondo.Unity.Contract` assembly, including in single-file builds. Leave the contract DLL out of distributed packages. Each package has its own assembly load context. Put private managed DLLs beside the server assembly, or include the assembly's `.deps.json` and its referenced files within the package. Mods run with the server process's permissions.
 
 The loader reads managed DLLs into memory so Windows can release the package files immediately. Loaded plugin assemblies have an empty `Assembly.Location`.
+
+## Authenticated control routes
+
+Call `host.RegisterAuthenticatedControlRoute(path, handler)` in `Initialize` to register an exact, case-sensitive path under `/api/`. Built-in routes take priority. Duplicate plugin registrations for the same path fail. The host removes a package's registrations on shutdown or failed initialization.
+
+Before invoking the handler, the host resolves the JSON body's `token` using the same account registry as built-in control routes. Missing or invalid tokens return `401` with `{"error":"sesion"}`. The handler receives the resolved `AccountId`, HTTP method, and original body, and returns a status code and JSON body. The host applies no additional HTTP method restriction to registered paths.

@@ -1,28 +1,20 @@
 using System;
 using System.Linq;
+using System.Text.Json;
 using Jondo.Unity.Server.Managers;
+using Jondo.Unity.Server.Network;
+using Jondo.Unity.ServerMods;
 
-namespace Jondo.Unity.Server.Network
+namespace Jondo.Unity.Server.Mods
 {
-    /// <summary>
-    /// The Cazacabezas mod's side of the control API: the hunter's record and order, the board of
-    /// prey, taking an order and giving it up -- for the account's character in the world.
-    /// </summary>
-    /// <remarks>
-    /// Any player may ask, with his own session's token (the launcher hands it to the client as
-    /// JONDO_PLAYER_TOKEN): it is his own character the answer is about, and nothing here is
-    /// decided by the mod -- every rule is <see cref="HeadHunts"/>'s.
-    /// </remarks>
-    public static partial class ControlApi
+    /// <summary>Temporary adapter to the host hunt implementation for one in-world character.</summary>
+    internal sealed class CazacabezasHunter(GameSession me) : ICazacabezasHunter
     {
-        /// <summary>The account's character in the world, or null.</summary>
-        private static GameSession? InTheWorld(long account)
-            => SessionRegistry.All().FirstOrDefault(s => s.AccountId == account && s.IsInWorld && s.HasCharacter);
+        internal static CazacabezasHunter? Find(long accountId)
+            => ControlApi.InTheWorld(accountId) is { } session ? new CazacabezasHunter(session) : null;
 
-        private static Respuesta HeadHuntStatus(long account)
+        public string StatusJson()
         {
-            var me = InTheWorld(account);
-            if (me == null) return Mal(409, "world");
             long id = me.State.CharacterId;
             int level = me.State.CharacterLevel;
             var alignment = Alignments.Of(id);
@@ -55,7 +47,7 @@ namespace Jondo.Unity.Server.Network
             }
 
             var onMe = HeadHunts.OrdersOn(id);
-            return Bien(new
+            return JsonSerializer.Serialize(new
             {
                 on = HeadHunts.On,
                 character = me.State.CharacterName,
@@ -78,12 +70,10 @@ namespace Jondo.Unity.Server.Network
             });
         }
 
-        private static Respuesta HeadHuntBoard(long account)
+        public string BoardJson()
         {
-            var me = InTheWorld(account);
-            if (me == null) return Mal(409, "world");
             var board = HeadHunts.CandidatesFor(me.State.CharacterId, me.State.CharacterLevel);
-            return Bien(new
+            return JsonSerializer.Serialize(new
             {
                 prey = board.Select(c => new
                 {
@@ -93,23 +83,12 @@ namespace Jondo.Unity.Server.Network
             });
         }
 
-        private static Respuesta HeadHuntTake(string cuerpo, long account)
+        public string Take(long target)
         {
-            var me = InTheWorld(account);
-            if (me == null) return Mal(409, "world");
-            long target = Numero(cuerpo, "target");
-            using (SessionContext.Push(me))
-            {
-                string result = HeadHunts.TakeAsync(me.State.CharacterId, me.State.CharacterLevel, target).GetAwaiter().GetResult();
-                return result == "ok" ? Bien(new { taken = target }) : Mal(409, result);
-            }
+            using var context = SessionContext.Push(me);
+            return HeadHunts.TakeAsync(me.State.CharacterId, me.State.CharacterLevel, target).GetAwaiter().GetResult();
         }
 
-        private static Respuesta HeadHuntAbandon(long account)
-        {
-            var me = InTheWorld(account);
-            if (me == null) return Mal(409, "world");
-            return HeadHunts.Abandon(me.State.CharacterId) ? Bien(new { abandoned = true }) : Mal(409, "none");
-        }
+        public bool Abandon() => HeadHunts.Abandon(me.State.CharacterId);
     }
 }

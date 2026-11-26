@@ -2,7 +2,6 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Jondo.Unity.Protocol;
@@ -17,7 +16,7 @@ namespace Jondo.Unity.Server.Bots
     /// area next to the home one with the most maps that allow an aggression (the Cania
     /// Plains, beside Astrub), coming in on its front, the stretch nearest to the home area. There they look for
     /// the enemy and aggress one of their size, and from the hunters' level they take an order
-    /// from the Cazacabezas board, through the mod's own door, and go after their prey while its
+    /// from the Cazacabezas board and go after their prey while its
     /// hunt is open.
     /// </summary>
     internal sealed partial class SimulatedPlayer
@@ -198,31 +197,29 @@ namespace Jondo.Unity.Server.Bots
         // ─── The Cazacabezas ─────────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// An order from the board, now and then, as a player takes one in the Cazacabezas window:
-        /// the same requests to the control API, with its session's token. Only a prey in the world
-        /// is chosen -- a bot is not in for days to wait for one.
+        /// Takes an order for a target already in the world using the same hunt rules as a player.
         /// </summary>
-        private void TakeAnOrder(GameSession session)
+        private async Task TakeAnOrderAsync(GameSession session)
         {
             if (!HeadHunts.On || HeadHunts.OrderOf(_characterId) != null
-                || HeadHunts.CannotHunt(_characterId, session.State.CharacterLevel) != null) return;
-            if (Ask("board") is not JsonElement board || !board.TryGetProperty("prey", out var list)) return;
-            var online = list.EnumerateArray()
-                .Where(p => p.GetProperty("online").GetBoolean() && p.GetProperty("hunters").GetInt32() < HeadHunts.HuntersPerTarget)
-                .Select(p => p.GetProperty("id").GetInt64())
-                .ToList();
-            if (online.Count == 0) return;
-            long target = online[_dice.Next(online.Count)];
-            if (Ask("take", ",\"target\":" + target) != null)
-                Console.WriteLine($"[Bots] {_name} takes a head hunter's order.");
-        }
+                || HeadHunts.CannotHunt(_characterId, session.State.CharacterLevel) != null
+                || !session.IsInWorld || !session.HasCharacter) return;
+            try
+            {
+                var online = HeadHunts.CandidatesFor(session.State.CharacterId, session.State.CharacterLevel)
+                    .Where(p => p.Online && p.Hunters < HeadHunts.HuntersPerTarget)
+                    .ToList();
+                if (online.Count == 0) return;
 
-        /// <summary>One of the mod's requests, answered as the mod is answered; null unless it went well.</summary>
-        private JsonElement? Ask(string route, string more = "")
-        {
-            var answer = ControlApi.Responder("/api/headhunts/" + route, "POST", "{\"token\":\"" + _token + "\"" + more + "}");
-            if (answer is not { Codigo: 200 } ok) return null;
-            return JsonDocument.Parse(ok.Json).RootElement.Clone();
+                long target = online[_dice.Next(online.Count)].Id;
+                using var context = SessionContext.Push(session);
+                if (await HeadHunts.TakeAsync(session.State.CharacterId, session.State.CharacterLevel, target) == "ok")
+                    Console.WriteLine($"[Bots] {_name} takes a head hunter's order.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Bots] {_name} could not take a head hunter's order: {ex.Message}");
+            }
         }
 
         /// <summary>

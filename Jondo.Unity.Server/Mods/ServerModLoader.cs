@@ -16,6 +16,8 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
     private readonly Stack<Host> _started = new();
     private int _stopped;
 
+    internal ServerModControlRoutes ControlRoutes { get; } = new();
+
     public ClientModCatalog.Asset[] ClientAssets => _started.Reverse().Select(host => host.ClientAsset)
         .OfType<ClientModCatalog.Asset>().ToArray();
 
@@ -102,7 +104,7 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
             var (package, manifestJson) = matches[0];
             var manifest = manifestJson.Deserialize<Manifest>();
             string label = $"{Path.GetFileName(package)} ({manifest.Id})";
-            host = new Host(log, label);
+            host = new Host(log, label, ControlRoutes);
             var mod = LoadPackage(package, manifest, host, out string? clientPath);
             mod.Initialize(host);
             host.Mod = mod;
@@ -194,7 +196,8 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
         [property: JsonPropertyName("serverAssembly")] string ServerAssembly,
         [property: JsonPropertyName("clientAsset")] string ClientAsset);
 
-    private sealed class Host(Action<string> log, string label) : IServerModHost
+    private sealed class Host(Action<string> log, string label, ServerModControlRoutes controlRoutes)
+        : IServerModHost, ICazacabezasHost
     {
         private readonly Stack<Action> _cleanup = new();
         private bool _stopping;
@@ -202,6 +205,18 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
         internal ClientModCatalog.Asset? ClientAsset { get; set; }
 
         public void Log(string message) => log($"[Server mods] {label}: {message}");
+
+        public void RegisterAuthenticatedControlRoute(string path, Func<AuthenticatedControlRequest, ServerModControlResponse> handler)
+        {
+            lock (_cleanup)
+            {
+                if (_stopping) throw new InvalidOperationException("The server mod is stopping.");
+                controlRoutes.Add(path, handler);
+                _cleanup.Push(() => controlRoutes.Remove(path));
+            }
+        }
+
+        ICazacabezasHunter? ICazacabezasHost.FindHunter(long accountId) => CazacabezasHunter.Find(accountId);
 
         public void RegisterCleanup(Action cleanup)
         {
