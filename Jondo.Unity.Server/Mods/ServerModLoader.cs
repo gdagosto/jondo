@@ -247,7 +247,7 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
         [property: JsonPropertyName("clientAsset")] string ClientAsset);
 
     private sealed class Host(Action<string> log, string label, ServerModControlRoutes controlRoutes)
-        : IServerModHost, IHuntModHost, IHeroesControl, IHeroesModHost
+        : IServerModHost, IHuntModHost, IHeroesControl, IHeroesModHost, IFightModHost
     {
         private readonly Stack<Action> _cleanup = new();
         private bool _stopping;
@@ -288,6 +288,15 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
             {
                 if (_stopping) throw new InvalidOperationException("The server mod is stopping.");
                 _cleanup.Push(HuntGameplay.Register(gameplay));
+            }
+        }
+
+        void IFightModHost.RegisterFightParticipantPolicy(IFightParticipantPolicy policy)
+        {
+            lock (_cleanup)
+            {
+                if (_stopping) throw new InvalidOperationException("The server mod is stopping.");
+                _cleanup.Push(FightParticipants.Register(policy));
             }
         }
 

@@ -1,5 +1,6 @@
 using Jondo.Unity.Server.Managers;
 using Jondo.Unity.Server.Mods;
+using Jondo.Unity.ServerMods;
 
 namespace Jondo.Unity.Server.Network
 {
@@ -24,11 +25,11 @@ namespace Jondo.Unity.Server.Network
             }
         }
 
-        public static Task LeaveAsync(Heroes.Hero hero)
-            => HeroesWorld.RemoveActorAsync(hero.Session.MapId, hero.CharacterId);
-
-        public static Task MasterMovedAsync(GameSession master, long mapLeft)
-            => Heroes.Gameplay?.MasterMovedAsync(master, mapLeft) ?? Task.CompletedTask;
+        public static Task MasterMovedAsync(GameSession master, long mapLeft, IReadOnlyList<IHeroMember>? admitted = null)
+            => admitted == null
+                ? Heroes.Gameplay?.MasterMovedAsync(master, mapLeft) ?? Task.CompletedTask
+                : Heroes.Gameplay?.MoveDungeonFollowersAsync(master, mapLeft, admitted)
+                    ?? Task.CompletedTask;
 
         public static Task MasterWalkedAsync(GameSession master, IReadOnlyList<int> cells)
             => Heroes.Gameplay?.MasterWalkedAsync(master, cells) ?? Task.CompletedTask;

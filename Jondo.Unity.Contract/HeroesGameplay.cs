@@ -33,7 +33,7 @@ public interface IHeroGroups
     bool SharesQuests(long characterId);
 }
 
-public interface IHeroesGameplay : IHeroGroups
+public interface IHeroesGameplay : IHeroGroups, IHeroesDungeonAdmission
 {
     int Max { get; }
     string Connect(IHeroSession master, long heroId);

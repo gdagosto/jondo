@@ -26,7 +26,7 @@ namespace Jondo.Unity.Tests.Combat
         public void A_hero_is_his_players_to_play_with_his_class_spells()
         {
             var hero = Hero();
-            FightHandler.PlayAsHero(hero, Master);
+            FightHandler.AssignAllyController(hero, Master);
 
             Assert.True(hero.IsPlayedAlly);
             Assert.True(hero.ControlledBy(Master));
@@ -44,7 +44,7 @@ namespace Jondo.Unity.Tests.Combat
         {
             var pantin = new Fighter { Id = -5, Level = 1, Invocador = -1 };
             pantin.HechizosDeInvocado = new[] { (30669, 1), (3854, 1) };
-            FightHandler.PlayAsHero(pantin, Master);
+            FightHandler.AssignAllyController(pantin, Master);
 
             Assert.True(pantin.ControlledBy(Master));
             Assert.Equal(new[] { (30669, 1), (3854, 1) }, pantin.HechizosDeInvocado);

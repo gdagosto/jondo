@@ -270,7 +270,7 @@ namespace Jondo.Unity.Tests.World
                     [hero] = new() { Xp = 50, Kamas = 5, Loot = new() { [287] = 1 } },
                     [777] = new() { Xp = 1, Kamas = 1, Loot = new() { [287] = 4 } },   // somebody else's
                 };
-                FightHandler.GatherHeroLoot(plan);
+                FightHandler.RouteSharedLoot(plan);
                 Assert.Empty(plan[master].Loot);
                 Assert.Equal(3, plan[hero].Loot[287]);
                 Assert.Equal(1, plan[hero].Loot[6903]);
@@ -285,7 +285,7 @@ namespace Jondo.Unity.Tests.World
                     [master] = new() { Loot = new() { [16540] = 1, [287] = 2 }, Own = new() { [16540] = 1 } },
                     [hero] = new() { Loot = new() { [16540] = 1 }, Own = new() { [16540] = 1 } },
                 };
-                FightHandler.GatherHeroLoot(plan);
+                FightHandler.RouteSharedLoot(plan);
                 Assert.Equal(1, plan[master].Loot[16540]);
                 Assert.False(plan[master].Loot.ContainsKey(287));
                 Assert.Equal(1, plan[hero].Loot[16540]);
@@ -1056,26 +1056,31 @@ namespace Jondo.Unity.Tests.World
             string tag = Guid.NewGuid().ToString("N")[..6];
             long master = Character(Account, "Jefe-" + tag, 8);
             long hero = Character(Account, "Escudero-" + tag, 1);
+            long busy = Character(Account, "Ocupado-" + tag, 9);
             await using var pipe = await ClientPipe.OpenAsync(Account, master, Map, "Jefe-" + tag);
             try
             {
                 Assert.Equal("ok", Heroes.Connect(pipe.Session, hero));
-                var fight = new FightInstance(990_311, Map, Map);
-                fight.SetPlacementCells(new System.Collections.Generic.List<int> { 300, 314 }, new System.Collections.Generic.List<int> { 100, 114 });
-                fight.AddPlayer(new Fighter { Id = master, Name = "Jefe-" + tag, Level = 50, MaxHP = 500, CurrentHP = 500 });
+                Assert.Equal("ok", Heroes.Connect(pipe.Session, busy));
+                var busySession = Heroes.SessionOf(busy)!;
+                busySession.State.IsInFight = true;
+                busySession.State.FightId = 990_311;
 
-                FightHandler.AddHeroes(fight, master);
+                var fight = await OpenFightAsync(pipe);
 
                 var fighter = Assert.Single(fight.Azul, f => f.Id == hero);
+                Assert.Null(fight.Buscar(busy));
+                Assert.Equal(990_311, busySession.State.FightId);
                 Assert.Equal(0, fighter.TeamId);
                 Assert.True(fighter.IsPlayedAlly);
                 Assert.True(fighter.ControlledBy(master));
+                Assert.False(fighter.ControlledBy(busy));
                 Assert.True(fighter.IsReady);
                 Assert.True(fighter.IsCharacter);
                 Assert.Equal(1, fighter.Breed);
                 // His class's spells, his own, to cast from his master's client.
                 Assert.NotEmpty(fighter.HechizosDeInvocado);
-                var jyy = ProtoMessage.Parse(FightHandler.PlayedAllyBarForTests(fighter, master)).Fields;
+                var jyy = ProtoMessage.Parse(FightHandler.PlayedAllyBar(fighter, master)).Fields;
                 Assert.Equal(hero, jyy.Single(f => f.FieldNumber == 3).VarIntValue);
                 Assert.Equal(master, jyy.Single(f => f.FieldNumber == 4).VarIntValue);
                 Assert.Equal(fighter.HechizosDeInvocado.Count + 1, jyy.Count(f => f.FieldNumber == 6));
@@ -1088,9 +1093,91 @@ namespace Jondo.Unity.Tests.World
             }
             finally
             {
+                await RemoveFightAsync(pipe);
                 Heroes.DisconnectAll(master);
                 SessionRegistry.Unregister(pipe.Session);
             }
+        }
+
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public async Task A_normal_fight_completion_pays_each_participant_once(bool withHeroes)
+        {
+            string tag = Guid.NewGuid().ToString("N")[..6];
+            long master = Character(Account, "Jefe-" + tag, 8);
+            long hero = Character(Account, "Escudero-" + tag, 1);
+            await using var pipe = await ClientPipe.OpenAsync(Account, master, Map, "Jefe-" + tag);
+            try
+            {
+                if (withHeroes)
+                    Assert.Equal("ok", Heroes.Connect(pipe.Session, hero));
+                else
+                {
+                    Dispose();
+                    Assert.Null(FightParticipants.Policy);
+                }
+                var participant = withHeroes ? Heroes.SessionOf(hero)! : pipe.Session;
+                long xp = participant.State.Experience;
+                long kamas = participant.State.Kamas;
+                long masterKamas = pipe.Session.State.Kamas;
+                var fight = await OpenFightAsync(pipe);
+                Assert.Equal(withHeroes ? 2 : 1, fight.PeopleIn(FightInstance.Azules));
+                fight.CancelPlacementTimer();
+                fight.StartFight();
+                var monster = Assert.Single(fight.Rojo);
+                monster.XpReward = 1000;
+                monster.CurrentHP = 0;
+
+                using var context = SessionContext.Push(pipe.Session);
+                Assert.True(await FightHandler.CheckFightOverAsync(pipe.ToClient, fight));
+                Assert.Equal(FightInstance.WaitsForTheJwz, fight.FinPendiente);
+                Assert.Equal(kamas, participant.State.Kamas);
+
+                await FightHandler.HandleFightMessageAsync(pipe.ToClient, [], Op.Uri("jwz"));
+                Assert.Null(FightHandler.FightById(fight.FightId));
+                Assert.False(participant.State.IsInFight);
+                Assert.Equal(0, participant.State.FightId);
+                long paidXp = participant.State.Experience;
+                long paidKamas = participant.State.Kamas;
+                long paidMasterKamas = pipe.Session.State.Kamas;
+                Assert.True(paidXp > xp);
+                long pool = ServerSettings.WithBonus(10L + monster.Level * 5L, ServerSettings.Current.KamasBonusPercent);
+                long share = withHeroes ? pool / 2 : pool;
+                Assert.Equal(share, paidKamas - kamas);
+                Assert.Equal(share, paidMasterKamas - masterKamas);
+
+                await FightHandler.HandleFightMessageAsync(pipe.ToClient, [], Op.Uri("jwz"));
+                fight.CheckFightEnd();
+                Assert.True(await FightHandler.CheckFightOverAsync(pipe.ToClient, fight));
+                Assert.Equal(paidXp, participant.State.Experience);
+                Assert.Equal(paidKamas, participant.State.Kamas);
+                Assert.Equal(paidMasterKamas, pipe.Session.State.Kamas);
+            }
+            finally
+            {
+                await RemoveFightAsync(pipe);
+                Heroes.DisconnectAll(master);
+            }
+        }
+
+        private static async Task<FightInstance> OpenFightAsync(ClientPipe pipe, bool solo = false)
+        {
+            using var context = SessionContext.Push(pipe.Session);
+            var group = new MobSpawnManager.MobGroup
+            {
+                MobId = -pipe.Session.CharacterId,
+                Members = [new() { Monster = new() { Id = 0, Look = "{1}" }, Level = 10 }],
+            };
+            await FightHandler.InitiateFightFromMobCollision(pipe.ToClient, group, Map, arenaMapId: RealMap, solo: solo);
+            return Assert.IsType<FightInstance>(FightHandler.FightById(pipe.Session.State.FightId));
+        }
+
+        private static async Task RemoveFightAsync(ClientPipe pipe)
+        {
+            using var context = SessionContext.Push(pipe.Session);
+            if (FightHandler.FightById(pipe.Session.State.FightId) is { } fight)
+                await FightHandler.AbandonFromOutsideAsync(fight, pipe.Session.CharacterId);
         }
 
         /// <summary>
@@ -1153,11 +1240,7 @@ namespace Jondo.Unity.Tests.World
             try
             {
                 Assert.Equal("ok", Heroes.Connect(pipe.Session, hero));
-                var fight = new FightInstance(990_312, Map, Map) { PeopleCap = 1 };
-                fight.SetPlacementCells(new System.Collections.Generic.List<int> { 300, 314 }, new System.Collections.Generic.List<int> { 100, 114 });
-                fight.AddPlayer(new Fighter { Id = master, Name = "Recluta-" + tag, Level = 50, MaxHP = 500, CurrentHP = 500 });
-
-                FightHandler.AddHeroes(fight, master);
+                var fight = await OpenFightAsync(pipe, solo: true);
 
                 Assert.Single(fight.Azul);
                 Assert.False(Heroes.SessionOf(hero)!.State.IsInFight);
@@ -1166,6 +1249,7 @@ namespace Jondo.Unity.Tests.World
             }
             finally
             {
+                await RemoveFightAsync(pipe);
                 Heroes.DisconnectAll(master);
                 SessionRegistry.Unregister(pipe.Session);
             }

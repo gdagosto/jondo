@@ -26,8 +26,6 @@ namespace Jondo.Unity.Server.Network
                 HeroesControlOperation.List => HeroesList(account),
                 HeroesControlOperation.Portrait => HeroesPortrait(body, account),
                 HeroesControlOperation.Quests => HeroesQuestSync(body, account),
-                HeroesControlOperation.AutoPass => HeroesAutoPass(body, account),
-                HeroesControlOperation.Loot => HeroesLootTo(body, account),
                 HeroesControlOperation.Sheet => HeroesSheet(body, account),
                 HeroesControlOperation.Create => HeroesCreate(body, account),
                 HeroesControlOperation.Name => HeroesName(account),
@@ -264,14 +262,6 @@ namespace Jondo.Unity.Server.Network
             });
         }
 
-        private static Respuesta HeroesAutoPass(string cuerpo, long account)
-        {
-            var me = InTheWorld(account);
-            if (me == null) return Mal(409, "world");
-            bool on = Numero(cuerpo, "on") != 0;
-            return Heroes.SetAutoPass(me.State.CharacterId, Numero(cuerpo, "id"), on) ? Bien(new { autoPass = on }) : Mal(409, "none");
-        }
-
         private static Respuesta HeroesQuestSync(string cuerpo, long account)
         {
             var me = InTheWorld(account);
@@ -281,14 +271,6 @@ namespace Jondo.Unity.Server.Network
             return Heroes.SetQuestSync(me.CharacterId, Numero(cuerpo, "id"), on)
                 ? Bien(new { questSync = on })
                 : Mal(409, "none");
-        }
-
-        private static Respuesta HeroesLootTo(string cuerpo, long account)
-        {
-            var me = InTheWorld(account);
-            if (me == null) return Mal(409, "world");
-            long masterId = me.State.CharacterId;
-            return Heroes.SetLootTo(masterId, Numero(cuerpo, "id")) ? Bien(new { lootTo = Heroes.LootTo(masterId) }) : Mal(409, "none");
         }
 
         /// <summary>One of the account's characters drawn as the launcher draws them, as a PNG in base64.</summary>

@@ -331,11 +331,15 @@ namespace Jondo.Unity.Server.Network
         /// another way.
         /// </summary>
         // Capture the old instance before mutating map/house/bag state.
-        public static async Task<(int seVa, int llega)> AnunciarMudanzaAsync(GameSession quien, GameMapAudience previousMap, int? porDonde = null)
+        public static Task<(int seVa, int llega)> AnunciarMudanzaAsync(GameSession quien, GameMapAudience previousMap, int? porDonde = null)
+            => AnunciarMudanzaAsync(quien, previousMap, admitted: null, porDonde);
+
+        internal static async Task<(int seVa, int llega)> AnunciarMudanzaAsync(GameSession quien, GameMapAudience previousMap,
+            IReadOnlyList<Jondo.Unity.ServerMods.IHeroMember>? admitted, int? porDonde = null)
         {
             var result = await MapPresenceService.Live.TravelAsync(quien, previousMap, porDonde);
             if (quien.IsInWorld && quien.CharacterId > 0)
-                await HeroPresence.MasterMovedAsync(quien, previousMap.MapId);
+                await HeroPresence.MasterMovedAsync(quien, previousMap.MapId, admitted);
             return result;
         }
 

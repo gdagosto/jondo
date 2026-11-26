@@ -430,7 +430,7 @@ namespace Jondo.Unity.Server.Network
             // their class bar and their turn go to it (FightHandler.PlayedAllyBar), where a
             // harness's bot gets neither and is played over the socket.
             if (heroes)
-                foreach (var ally in allies) FightHandler.PlayAsHero(ally, session.State.CharacterId);
+                foreach (var ally in allies) FightHandler.AssignAllyController(ally, session.State.CharacterId);
             var foes = Bots("foes");
             if (red.Count + foes.Count == 0) return Mal(400, "nobody-in-front");
 

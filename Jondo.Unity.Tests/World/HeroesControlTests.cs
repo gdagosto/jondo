@@ -98,6 +98,9 @@ public sealed class HeroesControlTests
             Assert.Equal("""{"error":"empty"}""", await Ask("create", new { token, name = " " }, 409));
             Assert.Equal("""{"connected":true}""", await Ask("connect", new { token, id = hero }));
             Assert.Equal("""{"error":"already"}""", await Ask("connect", new { token, id = hero }, 409));
+            Assert.Equal("""{"error":"none"}""", await Ask("autopass", new { token, id = stranger, on = 1 }, 409));
+            Assert.Equal("""{"error":"none"}""", await Ask("loot", new { token, id = stranger }, 409));
+            Assert.Equal($"{{\"lootTo\":{hero}}}", await Ask("loot", new { token, id = hero }));
             Assert.Equal("""{"error":"hero"}""", await Ask("sheet", new { token, id = stranger }, 404));
             await using (var other = await ClientPipe.OpenAsync(StrangerAccount, stranger, Map + 1, "Ajeno"))
             {

@@ -139,11 +139,13 @@ internal sealed partial class HeroGroups
         await world.DrawFollowerAsync(master, hero.Session);
     }
 
-    public async Task MasterMovedAsync(IHeroSession master, long mapLeft)
+    public Task MasterMovedAsync(IHeroSession master, long mapLeft)
+        => MoveFollowersAsync(master, mapLeft, Of(master.CharacterId).Where(hero => !hero.Session.IsInFight));
+
+    private async Task MoveFollowersAsync(IHeroSession master, long mapLeft, IEnumerable<IHeroMember> followers)
     {
-        foreach (var hero in Of(master.CharacterId))
+        foreach (var hero in followers)
         {
-            if (hero.Session.IsInFight) continue;
             if (mapLeft > 0 && mapLeft != master.Position.MapId)
                 await world.RemoveActorAsync(mapLeft, hero.CharacterId);
             await ArriveAsync(master, hero);

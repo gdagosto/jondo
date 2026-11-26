@@ -11,8 +11,6 @@ public enum HeroesControlOperation
     List = 0,
     Portrait = 3,
     Quests = 4,
-    AutoPass = 5,
-    Loot = 6,
     Sheet = 7,
     Create = 9,
     Name = 10,

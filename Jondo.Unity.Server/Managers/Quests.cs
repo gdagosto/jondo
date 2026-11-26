@@ -1348,7 +1348,7 @@ namespace Jondo.Unity.Server.Managers
 
         /// <summary>
         /// Whether a quest of whoever is in session waits for that key to be handed to that guardian:
-        /// a hero who has it goes in on a key rather than by his keyring (DungeonHeroes).
+        /// Heroes uses this when planning the follower's dungeon entry.
         /// </summary>
         internal static bool AwaitsKey(int npcId, int itemId) => KeyObjective(npcId, itemId) != null;
 

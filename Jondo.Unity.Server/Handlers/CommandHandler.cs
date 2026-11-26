@@ -1085,7 +1085,7 @@ namespace Jondo.Unity.Server.Handlers
         /// <summary>
         /// ".heros &lt;class&gt; [class...]" (".heroes"): the hero mode's probe. A fight on the spot
         /// with a JondoBot of each class given at one's side, played by hand from one's own client
-        /// as a hero would be (FightHandler.PlayAsHero), against as many JondoBots of random
+        /// as a hero would be (FightHandler.AssignAllyController), against as many JondoBots of random
         /// classes played by the server. For seeing whether the client lets a character be played
         /// by another one -- his bar, his turn, his spells. Administrators only.
         /// </summary>
@@ -1123,7 +1123,7 @@ namespace Jondo.Unity.Server.Handlers
                 return bot;
             }
             var heroes = breeds.Select(Bot).ToList();
-            foreach (var hero in heroes) FightHandler.PlayAsHero(hero, GameState.CharacterId);
+            foreach (var hero in heroes) FightHandler.AssignAllyController(hero, GameState.CharacterId);
             var classes = SpellTable.ClassBreeds.ToList();
             var foes = heroes.Select(_ => Bot(classes[Random.Shared.Next(classes.Count)])).ToList();
 

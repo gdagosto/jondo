@@ -15,12 +15,27 @@ public sealed class HeroesMod : IServerMod
         var world = gameplay.HeroesWorld;
         var groups = _groups = new HeroGroups(world, host.Log);
         gameplay.RegisterHeroesGameplay(groups);
+        ((IFightModHost)host).RegisterFightParticipantPolicy(groups);
 
         Register("list", HeroesControlOperation.List);
         Register("portrait", HeroesControlOperation.Portrait);
         Register("quests", HeroesControlOperation.Quests);
-        Register("autopass", HeroesControlOperation.AutoPass);
-        Register("loot", HeroesControlOperation.Loot);
+        host.RegisterAuthenticatedControlRoute(Path("autopass"), request =>
+        {
+            var master = world.FindMaster(request.AccountId);
+            if (master == null) return Error("world");
+            bool on = Number(request.Body, "on") != 0;
+            return groups.SetAutoPass(master.CharacterId, Number(request.Body, "id"), on)
+                ? Reply(200, new { autoPass = on }) : Error("none");
+        });
+        host.RegisterAuthenticatedControlRoute(Path("loot"), request =>
+        {
+            var master = world.FindMaster(request.AccountId);
+            if (master == null) return Error("world");
+            long id = master.CharacterId;
+            return groups.SetLootTo(id, Number(request.Body, "id"))
+                ? Reply(200, new { lootTo = groups.LootTo(id) }) : Error("none");
+        });
         Register("sheet", HeroesControlOperation.Sheet);
         Register("create", HeroesControlOperation.Create);
         Register("name", HeroesControlOperation.Name);

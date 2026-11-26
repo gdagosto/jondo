@@ -1797,7 +1797,7 @@ namespace Jondo.Unity.Server.Handlers
                     await TakeAllAsync(stream, elegidaAhora);
                 // Going in can be what hands a quest over: Klasmor's «Criptología», at Kardorim's
                 // crypt. To the heroes too: they went in with him, each by his own way in
-                // (DungeonHeroes), and reached Kardorim without the quest his fight moves.
+                // and reached Kardorim without the quest his fight moves.
                 if (startsAfterClosing != 0) await Managers.Quests.StartSharedAsync(session, startsAfterClosing);
                 return;
             }
