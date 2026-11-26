@@ -165,6 +165,14 @@ to the emulator. If you manually installed a custom mod that the server now send
 move the manual copy out of the client's MelonLoader `Mods/` directory before
 joining. The launcher sets aside legacy copies of the bundled Jondo mods.
 
+### Server packages
+
+Place server packages under `server-mods/` at the emulator root. List their manifest
+IDs in `ServerMods` in `config/server_settings.json` and restart. The list defaults
+to empty. The desktop and headless server both start packages in the listed order.
+See the [server mod contract](server-mod-contract.md) for the package layout and
+startup failure behavior.
+
 ## Verification
 
 ```sh

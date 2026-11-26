@@ -39,7 +39,6 @@ namespace Jondo.Unity.Server
             try
             {
                 _headless = UI.ServerLaunch.Headless(args);
-                AppDomain.CurrentDomain.ProcessExit += (_, _) => StopServices();
                 Console.CancelKeyPress += (_, e) =>
                 {
                     e.Cancel = true;
@@ -75,7 +74,7 @@ namespace Jondo.Unity.Server
         private static bool _headless;
         private static volatile bool _ready;
         private static volatile string _failure;
-        internal static bool Ready => _ready;
+        internal static bool Ready => _ready && !IsShuttingDown;
         internal static string Failure => _failure;
 
         internal static async Task RunServerAsync()
@@ -91,7 +90,6 @@ namespace Jondo.Unity.Server
             finally
             {
                 _ready = false;
-                StopServices();
             }
             if (_restartRequested != 0 && Failure == null)
             {
@@ -244,10 +242,36 @@ namespace Jondo.Unity.Server
 
             RegressionGuardTests.Run();
 
+            await RunEmulationAsync(Paths.ServerModsDirectory, ServerSettings.Current.ServerMods, ShutdownRequested,
+                RunEmulationServicesAsync, StopServices, Console.WriteLine);
 
+            // The backend has stopped. Give the process a bounded time to exit.
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5));
+                Console.WriteLine("[!] The graceful shutdown did not finish in time. Forcing the exit.");
+                Environment.Exit(0);
+            });
+        }
 
-            // 3. Start Emulation Servers
-            if (IsShuttingDown) return;
+        internal static async Task RunEmulationAsync(string modsDirectory, string[] enabledMods, Task shutdown,
+            Func<Task> serve, Action stopServices, Action<string> log)
+        {
+            if (shutdown.IsCompleted) return;
+            try
+            {
+                using var mods = Mods.ServerModLoader.Load(modsDirectory, enabledMods, log);
+                if (!shutdown.IsCompleted)
+                    await serve();
+            }
+            finally
+            {
+                stopServices();
+            }
+        }
+
+        private static async Task RunEmulationServicesAsync()
+        {
             Console.WriteLine("[+] Starting services...");
             try
             {
@@ -271,10 +295,6 @@ namespace Jondo.Unity.Server
                 throw;
             }
 
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("\n[+] ALL EMULATION SERVICES ONLINE AND READY!");
-            Console.ResetColor();
-
             // Here too one was invited to type /help. There is nowhere to: this is a WinExe with no
             // console and nobody reads standard input —not a single Console.ReadLine is left in the
             // server—. The real commands are those of the game chat, and
@@ -286,13 +306,13 @@ namespace Jondo.Unity.Server
             // right in the middle— left the account marked as busy FOREVER, and the registry
             // rejected it on every later attempt. CreatedAtUtc had been set from the start
             // without anyone reading it; now it is what releases them.
-            using var launchCleanup = new System.Threading.Timer(
+            await using var launchCleanup = new System.Threading.Timer(
                 _ => { try { Network.ClientLaunchRegistry.SoltarLosCaducados(TimeSpan.FromMinutes(5)); } catch { } },
                 null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
 
             // The Koliseo's queues, looked at again every few seconds: the rating window widens
             // with the wait, so a match that was not possible at enrolment may be now.
-            using var matchmaking = new System.Threading.Timer(
+            await using var matchmaking = new System.Threading.Timer(
                 _ =>
                 {
                     if (Interlocked.Exchange(ref _koliseoTicking, 1) != 0) return;
@@ -304,7 +324,7 @@ namespace Jondo.Unity.Server
 
             // The prisms' clock: weakened ones turning vulnerable, the conquests' minutes, the
             // pacified going back to normal (Handlers.ConquestHandler).
-            using var conquests = new System.Threading.Timer(
+            await using var conquests = new System.Threading.Timer(
                 _ =>
                 {
                     if (Interlocked.Exchange(ref _conquestTicking, 1) != 0) return;
@@ -322,7 +342,7 @@ namespace Jondo.Unity.Server
             Bots.SimulatedPlayers.Start(ServerSettings.Current);
 
             // The head hunters' clock: hunts opening and closing, the prey sighted (HeadHunts).
-            var headHunts = new System.Threading.Timer(
+            await using var headHunts = new System.Threading.Timer(
                 _ =>
                 {
                     if (Interlocked.Exchange(ref _headHuntsTicking, 1) != 0) return;
@@ -332,7 +352,7 @@ namespace Jondo.Unity.Server
                 },
                 null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
 
-            using var monsterWalks = new System.Threading.Timer(
+            await using var monsterWalks = new System.Threading.Timer(
                 _ =>
                 {
                     if (Interlocked.Exchange(ref _mobRoamingTicking, 1) != 0) return;
@@ -342,25 +362,15 @@ namespace Jondo.Unity.Server
                 },
                 null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
 
-            _ready = true;
-
-            await _shutdown.Task;
-            await monsterWalks.DisposeAsync();
-            await launchCleanup.DisposeAsync();
-            await matchmaking.DisposeAsync();
-            await conquests.DisposeAsync();
-            await headHunts.DisposeAsync();
-
-            StopServices();
-
-            // Safety net: if something gets stuck and the process does not end on its own, force
-            // the exit. It used to have to be killed by hand from the task manager.
-            _ = Task.Run(async () =>
+            if (!IsShuttingDown)
             {
-                await Task.Delay(TimeSpan.FromSeconds(5));
-                Console.WriteLine("[!] The graceful shutdown did not finish in time. Forcing the exit.");
-                Environment.Exit(0);
-            });
+                _ready = true;
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine("\n[+] ALL EMULATION SERVICES ONLINE AND READY!");
+                Console.ResetColor();
+            }
+
+            await ShutdownRequested;
         }
 
         private static readonly TaskCompletionSource _shutdown =
@@ -371,7 +381,6 @@ namespace Jondo.Unity.Server
         public static bool IsShuttingDown => Volatile.Read(ref _shutdownRequested) != 0;
 
         private static int _shutdownRequested;
-        private static int _servicesStopped;
 
         /// <summary>
         /// Shuts down like <see cref="RequestShutdown"/> and starts the server again, which is how
@@ -439,7 +448,6 @@ namespace Jondo.Unity.Server
 
         private static void StopServices()
         {
-            if (Interlocked.Exchange(ref _servicesStopped, 1) != 0) return;
             Console.WriteLine("[+] Stopping services...");
             try { Bots.SimulatedPlayers.Stop(); } catch { }
             try { HaapiServer.Stop(); } catch { }

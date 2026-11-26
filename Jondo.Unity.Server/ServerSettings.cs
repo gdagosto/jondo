@@ -103,6 +103,9 @@ namespace Jondo.Unity.Server
         /// <summary>Client mods to serve, in their configured load order.</summary>
         public string[] ClientMods { get; set; } = ["JondoFix.dll", "Cazacabezas.dll", "Heroes.dll"];
 
+        /// <summary>Enabled server mod manifest IDs, in startup order. Set in the file.</summary>
+        public string[] ServerMods { get; set; } = [];
+
         public HeroesModSettings Heroes { get; set; } = new();
         public CazacabezasModSettings Cazacabezas { get; set; } = new();
 
@@ -186,6 +189,7 @@ namespace Jondo.Unity.Server
             if (doc.RootElement.ValueKind != JsonValueKind.Object) return settings;
 
             settings.ClientMods ??= new ServerSettings().ClientMods;
+            settings.ServerMods ??= [];
             var keys = doc.RootElement.EnumerateObject().Select(property => property.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
             bool migrateHeroes = settings.Heroes == null || !keys.Contains(nameof(Heroes));
             bool migrateCazacabezas = settings.Cazacabezas == null || !keys.Contains(nameof(Cazacabezas));
@@ -244,6 +248,7 @@ namespace Jondo.Unity.Server
         {
             var copy = (ServerSettings)MemberwiseClone();
             copy.ClientMods = (string[])ClientMods.Clone();
+            copy.ServerMods = (string[])ServerMods.Clone();
             copy.Heroes = Heroes with { };
             copy.Cazacabezas = Cazacabezas with { };
             return copy;

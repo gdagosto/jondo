@@ -74,6 +74,8 @@ namespace Jondo.Unity.Launcher
 
         public static string ClientModsDirectory => Path.Combine(Root, "mods");
 
+        public static string ServerModsDirectory => Path.Combine(Root, "server-mods");
+
         /// <summary>
         /// The yearly events as the server's Events page leaves them: each one on its calendar, held
         /// open or held shut, and whether its monsters come out. Read again whenever it changes.
