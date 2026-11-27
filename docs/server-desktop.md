@@ -74,7 +74,7 @@ carries the same three for Windows.
 
 ## The window
 
-The window has four pages, reached from the sidebar or with Ctrl+1 to Ctrl+4. The top bar
+The window has five pages, reached from the sidebar or with Ctrl+1 to Ctrl+5. The top bar
 shows whether the world is online, how long it has run and how many players are in it.
 
 - **Console**: the world, network, machine and loaded-data counters, and the log with a
@@ -91,6 +91,8 @@ shows whether the world is online, how long it has run and how many players are 
   monsters are listed in `content/world/event_monsters.json` (Al Howin Gobballs and Tofus
   with pumpkin masks, the Kwismas Minotoball and Dragoturkeys in Frigost).
 - **Settings**: the settings that apply at the next start, available once the world is up.
+- **Mods** lists installed mods with activation switches, load-order arrows, and a
+  Settings button for mods with editable options.
 
 ## Settings and restart
 
@@ -107,12 +109,11 @@ offscreen rows. Right-clicking a packet row opens the existing name-binding pick
 
 ### Client mods
 
-Place client mod DLLs in the `mods/` directory at the emulator root. In **Settings**,
-the **Client mods** card lists the configured load order. Use the arrows to move a
-DLL, **−** to remove it from the order, and **+** to add a DLL from the folder. Reopen
-Settings with no unsaved changes to discover newly added files. Save and restart to
-publish the order. Missing DLLs are marked in Settings and skipped when serving the
-list, so a DLL can be restored without losing its place.
+Place standalone client mod DLLs in the `mods/` directory at the emulator root.
+On **Mods**, use the **Active** switch to select a DLL and the arrows to change its
+position among active client mods. Reopen **Mods** with no unsaved changes to discover
+new files. **Save and restart** publishes the order. Missing DLLs are marked in the
+table and skipped when serving the list, so a DLL can be restored without losing its place.
 
 ```json
 {
@@ -125,9 +126,9 @@ list, so a DLL can be restored without losing its place.
 ```
 
 Keep your other settings when editing this file. An empty `ClientMods` array serves
-zero standalone DLLs. An active package can also contribute a client DLL from
-its manifest. A matching name in `ClientMods` sets that package DLL's position
-in the order. See the [server mod contract](server-mod-contract.md) for ordering
+zero standalone DLLs. Active packages contribute their declared client DLLs in
+server load order. Saving from **Mods** clears separate `ClientMods` entries for
+DLLs declared by installed packages. See the [server mod contract](server-mod-contract.md) for ordering
 and conflicts. The server supports up to 128 available DLLs of up to 128 MiB each.
 Clients loading a manifest need MelonLoader 0.7.3 or newer.
 
@@ -150,10 +151,11 @@ out of the server's `mods/` folder and the client's MelonLoader `Mods/` folder.
 
 ### Server mods
 
-Place standalone server DLLs in `server-mods/` at the emulator root. Extract a
+Place standalone server DLLs in `mods/` at the emulator root. Extract a
 `*-server-mod.zip` into the same folder so its package directory contains
-`manifest.json`. Reopen **Settings** to find both under **Server mods**. Add them
-with **+**, use the arrows to set the order, then save and restart. For a headless
+`manifest.json`. In **Mods**, use **Active** to enable a server mod and the arrows
+to set its load order. **Settings** opens the package's editable options. Apply
+the dialog edits, then save or save and restart from the **Mods** page. For a headless
 server, edit `ServerMods` in `config/server_settings.json` using DLL filenames and
 package IDs in the order you want.
 

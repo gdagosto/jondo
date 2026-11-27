@@ -26,6 +26,10 @@ internal sealed record ServerModConfiguration(string Id, string? Name, string? A
     internal static JsonElement Resolve(ServerSettings settings, string id, ServerModConfiguration? schema)
         => JsonSerializer.SerializeToElement(Values(settings, id, schema));
 
+    internal static bool IsActive(ServerModConfiguration? schema, JsonElement configuration) =>
+        schema?.ActivationSetting is not { } activation ||
+        !configuration.TryGetProperty(activation, out var enabled) || enabled.ValueKind != JsonValueKind.False;
+
     internal static void Set<T>(ServerSettings settings, ServerModConfiguration schema, string key, T value)
     {
         var values = Values(settings, schema.Id, schema);

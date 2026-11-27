@@ -17,6 +17,6 @@
   </Target>
 
   <PropertyGroup>
-    <CazacabezasPackageDirectory Condition="'$(CazacabezasPackageDirectory)' == ''">$(MSBuildProjectDirectory)/../server-mods/cazacabezas</CazacabezasPackageDirectory>
+    <CazacabezasPackageDirectory Condition="'$(CazacabezasPackageDirectory)' == ''">$(MSBuildProjectDirectory)/../mods/cazacabezas</CazacabezasPackageDirectory>
   </PropertyGroup>
 </Project>

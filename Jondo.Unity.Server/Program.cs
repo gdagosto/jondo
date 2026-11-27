@@ -242,7 +242,7 @@ namespace Jondo.Unity.Server
 
             RegressionGuardTests.Run();
 
-            await RunEmulationAsync(Paths.ServerModsDirectory, ServerSettings.Current, ShutdownRequested,
+            await RunEmulationAsync(Paths.ModsDirectory, ServerSettings.Current, ShutdownRequested,
                 RunEmulationServicesAsync, StopServices, Console.WriteLine);
 
             // The backend has stopped. Give the process a bounded time to exit.
@@ -255,14 +255,14 @@ namespace Jondo.Unity.Server
         }
 
         internal static async Task RunEmulationAsync(string modsDirectory, ServerSettings settings, Task shutdown,
-            Func<Mods.ServerModLoader, Task> serve, Action stopServices, Action<string> log)
+            Func<Mods.ServerModLoader, ClientModCatalog, Task> serve, Action stopServices, Action<string> log)
         {
             if (shutdown.IsCompleted) return;
             try
             {
                 using var mods = Mods.ServerModLoader.LoadConfigured(modsDirectory, settings, log);
                 if (!shutdown.IsCompleted)
-                    await serve(mods);
+                    await serve(mods, new ClientModCatalog(modsDirectory, settings.ClientMods, mods.ClientAssets));
             }
             finally
             {
@@ -270,7 +270,7 @@ namespace Jondo.Unity.Server
             }
         }
 
-        private static async Task RunEmulationServicesAsync(Mods.ServerModLoader mods)
+        private static async Task RunEmulationServicesAsync(Mods.ServerModLoader mods, ClientModCatalog clientMods)
         {
             Console.WriteLine("[+] Starting services...");
             try
@@ -281,7 +281,6 @@ namespace Jondo.Unity.Server
                     Console.WriteLine("[!] Public binding does not encrypt traffic. Use it only on " +
                                       "a trusted network or behind a VPN/tunnel.");
                 }
-                var clientMods = new ClientModCatalog(Paths.ClientModsDirectory, ServerSettings.Current.ClientMods, mods.ClientAssets);
                 HaapiServer.Start(haapiPort, clientMods, mods.ControlRoutes);
                 ZaapServer.Start(port);
                 GameServerProxy.Start(gamePort);

@@ -197,10 +197,15 @@ namespace Jondo.Unity.Server
         public ServerSettings Copy()
         {
             var copy = (ServerSettings)MemberwiseClone();
-            copy.ClientMods = (string[])ClientMods.Clone();
-            copy.ServerMods = (string[])ServerMods.Clone();
-            copy.ModSettings = new(ModSettings, StringComparer.OrdinalIgnoreCase);
+            copy.CopyModsFrom(this);
             return copy;
+        }
+
+        internal void CopyModsFrom(ServerSettings source)
+        {
+            ClientMods = (string[])source.ClientMods.Clone();
+            ServerMods = (string[])source.ServerMods.Clone();
+            ModSettings = new(source.ModSettings, StringComparer.OrdinalIgnoreCase);
         }
 
         /// <summary>Whether two settings differ in anything that needs a restart.</summary>

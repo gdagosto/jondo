@@ -256,7 +256,7 @@ See [Server desktop and Linux deployment](docs/server-desktop.md) for requiremen
   | Random loot | See below |
   | Welcome message | A line in the chat on coming into the world |
   | Simulate players | Jondobot-Xx bots of a random class, each over its own connection: they walk, fight monsters, gather, go to the Koliseo and accept every duel; how many are in varies under the maximum chosen. Three of every five go to the [cities' war](#%EF%B8%8F-cities-war) |
-  | Server mods | Drop DLLs or unpack packages into `server-mods/`, set their load order, and restart. See [Server mods](docs/server-desktop.md#server-mods). |
+  | Server mods | Drop DLLs or unpack packages into `mods/`, set their load order, and restart. See [Server mods](docs/server-desktop.md#server-mods). |
 
   **Random loot.** Besides its own table, each monster beaten has a chance (10 % by default, raised
   by challenges and the drop bonus) of dropping two to five items around its level: ordinary

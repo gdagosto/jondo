@@ -166,7 +166,7 @@ jobs:
 
             Download the setup for your system to install the emulator and fetch the Dofus client. The platform ZIPs are ready to unpack for a manual installation.
 
-            Server operators can extract any of the optional `*-server-mod.zip` archives into `server-mods/` at the emulator root, add the mod ID to `ServerMods` in `config/server_settings.json`, and restart the server. The same mod archives work with the Windows and Linux servers.
+            Server operators can extract any of the optional `*-server-mod.zip` archives into `mods/` at the emulator root, add the mod ID to `ServerMods` in `config/server_settings.json`, and restart the server. The same mod archives work with the Windows and Linux servers.
 
           artifacts: release/*.zip,release/*.exe,release/*.json
           artifactErrorsFailBuild: true

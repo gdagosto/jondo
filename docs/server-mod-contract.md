@@ -2,7 +2,7 @@
 
 For a complete example and the server-side dispatch path, see [Writing server mods](writing-server-mods.md).
 
-Place each package in its own directory under `<emulator root>/server-mods/`. The following manifest belongs at `server-mods/example/manifest.json`.
+Place each package in its own directory under `<emulator root>/mods/`. The following manifest belongs at `mods/example/manifest.json`.
 
 ```json
 {
@@ -26,7 +26,11 @@ A standalone client DLL can still load when listed in `ClientMods` and no active
 
 ## Install and enable server mods
 
-Drop a standalone server mod DLL directly into `<emulator root>/server-mods/`. Add its filename, including `.dll`, to `ServerMods` in `config/server_settings.json`. Use the manifest ID for a package directory. Both forms can appear in the same list.
+When upgrading from an installation with a separate `server-mods/` folder, move its
+packages and standalone DLLs into `mods/`. Keep the existing package IDs and DLL
+filenames in `ServerMods`.
+
+Drop a standalone server mod DLL directly into `<emulator root>/mods/`. Add its filename, including `.dll`, to `ServerMods` in `config/server_settings.json`. Use the manifest ID for a package directory. Both forms can appear in the same list.
 
 ```json
 {

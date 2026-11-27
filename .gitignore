@@ -8,7 +8,7 @@
 publish/
 runtimes/
 /host-artifacts/
-/server-mods/*/
+/mods/*/
 .avalonia-build-tasks/
 *.pdb
 *.deps.json

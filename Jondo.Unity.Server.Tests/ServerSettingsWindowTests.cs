@@ -1,11 +1,9 @@
 using Avalonia;
-using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
 using Avalonia.LogicalTree;
 using System.Text.Json;
 using Jondo.Unity.Launcher.UI;
-using Jondo.Unity.Server.Mods;
 using Jondo.Unity.Server.UI;
 using Xunit;
 
@@ -21,8 +19,8 @@ public sealed class ServerSettingsWindowTests
         WithWindow(width, height, window =>
         {
             var cards = Find<SettingsCardsPanel>(window, "SettingsCards");
-            Assert.Equal(10, cards.Children.Count);
-            // Ten cards fill a full-HD screen; on 1280x720 the panel scrolls instead, never overlapping.
+            Assert.Equal(9, cards.Children.Count);
+            // At full HD the cards fit; at 1280x720 the panel can scroll without overlap.
             bool fits = width > 1800;
             Assert.All(cards.Children, card =>
             {
@@ -57,41 +55,26 @@ public sealed class ServerSettingsWindowTests
     [InlineData(Language.Es)]
     [InlineData(Language.En)]
     [InlineData(Language.Fr)]
-    public void Bot_and_manifest_controls_edit_settings_and_follow_toggles(Language language)
+    public void Bot_controls_edit_settings_and_follow_toggle(Language language)
     {
-        var schema = new ServerModConfiguration("sample", "Sample", "Enabled",
-        [
-            new ServerModSetting("Enabled", JsonSerializer.SerializeToElement(false), null, null, null, 0, 0, 0, null),
-            new ServerModSetting("Minutes", JsonSerializer.SerializeToElement(15), null, null, null, 1, 120, 5, "min"),
-        ]);
-        var settings = new ServerSettings { SimulatedPlayers = false, ServerMods = ["sample"] };
-        var view = new ServerSettingsView(language, settings, settings, () => { },
-            availableMods: [], serverMods: [schema]);
+        var settings = new ServerSettings { SimulatedPlayers = false };
+        var view = new ServerSettingsView(language, settings, settings, () => { });
         var window = new Window { Content = view };
         try
         {
             window.Show();
-            window.GetLogicalDescendants().OfType<Expander>().Single(e => Equals(e.Header, "Sample")).IsExpanded = true;
             window.UpdateLayout();
             var botsMax = Find<NumericUpDown>(window, "BotsMax");
-            var minutes = Find<NumericUpDown>(window, "sample_Minutes");
             Assert.False(botsMax.IsEffectivelyEnabled);
-            Assert.False(minutes.IsEffectivelyEnabled);
             Find<ToggleSwitch>(window, "BotsOn").IsChecked = true;
-            Find<ToggleSwitch>(window, "sample_Enabled").IsChecked = true;
             Assert.True(botsMax.IsEffectivelyEnabled);
-            Assert.True(minutes.IsEffectivelyEnabled);
             botsMax.Value = 25;
-            minutes.Value = 30;
 
             ServerSettings? saved = null;
             view.Editor.Save(value => saved = value.Copy());
             Assert.True(saved!.SimulatedPlayers);
             Assert.Equal(25, saved.SimulatedPlayersMax);
-            Assert.True(saved.ModSettings["sample"].GetProperty("Enabled").GetBoolean());
-            Assert.Equal(30, saved.ModSettings["sample"].GetProperty("Minutes").GetInt32());
             Assert.False(settings.SimulatedPlayers);
-            Assert.Empty(settings.ModSettings);
         }
         finally { window.Close(); }
     }
@@ -116,45 +99,10 @@ public sealed class ServerSettingsWindowTests
         Assert.Equal(4, read.ModSettings["fixture.package"].GetProperty("Delay").GetInt32());
     }
 
-    [AvaloniaFact]
-    public void Editing_mod_order_preserves_missing_mod_settings_and_waits_for_restart()
-    {
-        var settings = ServerSettings.Read("""
-            {"ClientMods":["JondoFix.dll","Enabled.dll"],"uninstalled":{"Enabled":false,"CustomValue":3}}
-            """);
-        var window = new ServerSettingsWindow(Language.En, settings, settings, ["Custom.dll", "Enabled.dll"]);
-        try
-        {
-            window.Show();
-
-            void Click(string name)
-            {
-                var button = window.GetLogicalDescendants().OfType<Button>().Single(b => AutomationProperties.GetName(b) == name);
-                button.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
-            }
-
-            Click("Move up Enabled.dll");
-            Click("Remove JondoFix.dll");
-            Click("Add Custom.dll");
-            Assert.True(window.Editor.Dirty);
-            Assert.False(window.Editor.Pending);
-            Assert.True(Find<Button>(window, "SaveSettings").IsEnabled);
-            Assert.Equal(["Enabled.dll", "Custom.dll"], window.Editor.Edited.ClientMods);
-            Assert.Equal(["JondoFix.dll", "Enabled.dll"], settings.ClientMods);
-
-            ServerSettings? saved = null;
-            window.Editor.Save(value => saved = value);
-            Assert.False(window.Editor.Dirty);
-            Assert.True(window.Editor.Pending);
-            Assert.True(JsonElement.DeepEquals(settings.ModSettings["uninstalled"], saved!.ModSettings["uninstalled"]));
-        }
-        finally { window.Close(); }
-    }
-
     private static void WithWindow(double width, double height, Action<Window> check)
     {
         var settings = new ServerSettings();
-        var settingsWindow = new ServerSettingsWindow(Language.Es, settings, settings, ["JondoFix.dll", "Enabled.dll", "Extra.dll"]);
+        var settingsWindow = new ServerSettingsWindow(Language.Es, settings, settings);
         var content = settingsWindow.Content;
         settingsWindow.Content = null;
         // Exercise the real content at an exact client size, independently of monitor clamping.

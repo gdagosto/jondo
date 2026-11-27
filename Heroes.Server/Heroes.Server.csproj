@@ -3,7 +3,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <HeroesPackageDirectory Condition="'$(HeroesPackageDirectory)' == ''">$(MSBuildProjectDirectory)/../server-mods/heroes</HeroesPackageDirectory>
+    <HeroesPackageDirectory Condition="'$(HeroesPackageDirectory)' == ''">$(MSBuildProjectDirectory)/../mods/heroes</HeroesPackageDirectory>
   </PropertyGroup>
 
   <ItemGroup>

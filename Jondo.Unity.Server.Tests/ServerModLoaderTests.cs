@@ -55,12 +55,16 @@ public sealed class ServerModLoaderTests : IDisposable
         string path = Path.Combine(_root.FullName, file);
         File.Copy(Path.Combine(AppContext.BaseDirectory, "ServerModFixture", AssemblyFile), path);
         CopyFixture(DependencyFile, _root.FullName);
-        Assert.Contains(ServerModLoader.ListSettings(_root.FullName), setting => setting.Id == file);
+        File.WriteAllBytes(Path.Combine(_root.FullName, "JondoFix.dll"), [1]);
+        var installed = ServerModLoader.ListInstalled(_root.FullName);
+        Assert.Contains(installed, mod => mod.Id == file && mod.IsStandalone);
+        Assert.DoesNotContain(installed, mod => mod.Id is "JondoFix.dll" or DependencyFile);
 
         Task Start(string json) => Program.RunEmulationAsync(_root.FullName, ServerSettings.Read(json),
-            new TaskCompletionSource().Task, mods =>
+            new TaskCompletionSource().Task, (mods, catalog) =>
             {
                 Assert.Empty(mods.ClientAssets);
+                Assert.Equal("JondoFix.dll", Assert.Single(catalog.CreateManifest().Mods).Name);
                 _messages.Add("ready");
                 return Task.CompletedTask;
             }, () => { }, _messages.Add);
@@ -85,7 +89,7 @@ public sealed class ServerModLoaderTests : IDisposable
         CreatePackage("package", id: "fixture.servermod.dll");
         CopyFixture(AssemblyFile, _root.FullName);
 
-        Assert.Empty(ServerModLoader.ListSettings(_root.FullName));
+        Assert.Empty(ServerModLoader.ListInstalled(_root.FullName));
         var failure = Assert.Throws<InvalidOperationException>(() =>
             ServerModLoader.Load(_root.FullName, [AssemblyFile], _messages.Add));
         Assert.Contains("Duplicate mod ID", failure.Message);
@@ -94,20 +98,22 @@ public sealed class ServerModLoaderTests : IDisposable
     [Fact]
     public async Task ClientEndpointsPublishOnlyActiveDeclaredDllsAndConfiguredStandaloneMods()
     {
-        var modsRoot = Directory.CreateDirectory(Path.Combine(_root.FullName, "mods"));
-        File.WriteAllBytes(Path.Combine(modsRoot.FullName, "JondoFix.dll"), [1]);
-        File.WriteAllBytes(Path.Combine(modsRoot.FullName, "Shared.dll"), [2]);
-        File.WriteAllBytes(Path.Combine(modsRoot.FullName, "Standalone.dll"), [3]);
+        File.WriteAllBytes(Path.Combine(_root.FullName, "JondoFix.dll"), [1]);
+        File.WriteAllBytes(Path.Combine(_root.FullName, "Shared.dll"), [2]);
+        File.WriteAllBytes(Path.Combine(_root.FullName, "Standalone.dll"), [3]);
         InstallFixture("z-first", "client/Shared.dll", [4, 5]);
         InstallFixture("a-second", "client/shared.dll", [6]);
         InstallFixture("extra", "client/Extra.dll", [7]);
         InstallFixture("disabled", "client/Disabled.dll", [8]);
         InstallFixture("server-only");
+        var installed = Assert.Single(ServerModLoader.ListInstalled(_root.FullName), mod => mod.Id == "fixture.z-first");
+        Assert.Equal("1.0.0", installed.Version);
+        Assert.Equal("Shared.dll", installed.ClientAsset);
         string[] standalone = ["JondoFix.dll", "Shared.dll", "Standalone.dll", AssemblyFile];
 
         using var mods = ServerModLoader.Load(_root.FullName,
             ["fixture.z-first", "fixture.a-second", "fixture.extra", "fixture.server-only"], _messages.Add);
-        var catalog = new ClientModCatalog(modsRoot.FullName, standalone, mods.ClientAssets);
+        var catalog = new ClientModCatalog(_root.FullName, standalone, mods.ClientAssets);
         int port;
         using (var probe = new TcpListener(IPAddress.Loopback, 0))
         {
@@ -163,7 +169,7 @@ public sealed class ServerModLoaderTests : IDisposable
         Assert.DoesNotContain(catalog.CreateManifest().Mods, mod => mod.Name.Equals("Shared.dll", StringComparison.OrdinalIgnoreCase));
 
         using var disabled = ServerModLoader.Load(_root.FullName, [], _messages.Add);
-        var legacy = new ClientModCatalog(modsRoot.FullName, standalone, disabled.ClientAssets);
+        var legacy = new ClientModCatalog(_root.FullName, standalone, disabled.ClientAssets);
         using var fallback = legacy.OpenDownload("Shared.dll");
         Assert.NotNull(fallback);
         Assert.Equal(2, fallback.ReadByte());
@@ -240,12 +246,13 @@ public sealed class ServerModLoaderTests : IDisposable
     [Fact]
     public async Task DefaultSettingsStartWithoutPackagesOrModRoutes()
     {
-        string missingRoot = Path.Combine(_root.FullName, "server-mods");
+        string missingRoot = Path.Combine(_root.FullName, "mods");
         await Program.RunEmulationAsync(missingRoot, ServerSettings.Read("{}"),
-            new TaskCompletionSource().Task, mods =>
+            new TaskCompletionSource().Task, (mods, catalog) =>
             {
                 Assert.False(mods.ControlRoutes.TryGet("/api/fixture/status", out _));
                 Assert.Empty(mods.ClientAssets);
+                Assert.Empty(catalog.CreateManifest().Mods);
                 _messages.Add("ready");
                 return Task.CompletedTask;
             }, () => _messages.Add("host stopped"), _messages.Add);
@@ -274,9 +281,10 @@ public sealed class ServerModLoaderTests : IDisposable
 
         await Program.RunEmulationAsync(_root.FullName,
             new ServerSettings { ServerMods = ["fixture.first", "fixture.second"] },
-            new TaskCompletionSource().Task, mods =>
+            new TaskCompletionSource().Task, (mods, catalog) =>
             {
                 Assert.Equal(expected, mods.ClientAssets.Select(asset => Path.GetFileName(asset.RelativePath)));
+                Assert.Equal(expected, catalog.CreateManifest().Mods.Select(mod => mod.Name));
                 _messages.Add("ready");
                 return Task.CompletedTask;
             }, () => _messages.Add("host stopped"), _messages.Add);
@@ -296,7 +304,7 @@ public sealed class ServerModLoaderTests : IDisposable
         var settings = ServerSettings.Read("""{"ServerMods":["fixture.z-first","FIXTURE.A-SECOND"]}""");
         var shutdown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        Task run = Program.RunEmulationAsync(_root.FullName, settings, shutdown.Task, _ =>
+        Task run = Program.RunEmulationAsync(_root.FullName, settings, shutdown.Task, (_, _) =>
         {
             _messages.Add("ready");
             return shutdown.Task;
@@ -335,7 +343,7 @@ public sealed class ServerModLoaderTests : IDisposable
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             Program.RunEmulationAsync(_root.FullName,
                 new ServerSettings { ServerMods = ["fixture.first", "fixture.broken", "fixture.later"] },
-                new TaskCompletionSource().Task, _ => throw new Xunit.Sdk.XunitException("Listeners started"),
+                new TaskCompletionSource().Task, (_, _) => throw new Xunit.Sdk.XunitException("Listeners started"),
                 () => _messages.Add("host stopped"), _messages.Add));
 
         string failure = Program.StartupFailure(exception);
@@ -361,7 +369,7 @@ public sealed class ServerModLoaderTests : IDisposable
         var shutdown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await Program.RunEmulationAsync(_root.FullName,
             new ServerSettings { ServerMods = ["fixture.first"] }, shutdown.Task,
-            _ => throw new Xunit.Sdk.XunitException("Listeners started"), () => _messages.Add("host stopped"),
+            (_, _) => throw new Xunit.Sdk.XunitException("Listeners started"), () => _messages.Add("host stopped"),
             message =>
             {
                 _messages.Add(message);

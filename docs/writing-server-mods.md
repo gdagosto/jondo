@@ -1,6 +1,6 @@
 # Writing server mods
 
-Server mods are .NET 10 class libraries loaded by `Jondo.Unity.Server` from packages in `server-mods/`. A mod calls host services to read or change game state, registers gameplay hooks for callbacks from the server, and can expose authenticated control routes to a client. The shared interfaces live in [`Jondo.Unity.Contract`](../Jondo.Unity.Contract/IServerMod.cs) under the `Jondo.Unity.ServerMods` namespace.
+Server mods are .NET 10 class libraries loaded by `Jondo.Unity.Server` from packages in `mods/`. A mod calls host services to read or change game state, registers gameplay hooks for callbacks from the server, and can expose authenticated control routes to a client. The shared interfaces live in [`Jondo.Unity.Contract`](../Jondo.Unity.Contract/IServerMod.cs) under the `Jondo.Unity.ServerMods` namespace.
 
 ## Create a server-only mod
 
@@ -79,14 +79,14 @@ Build and stage the package. These commands run in PowerShell from the repositor
 
 ```powershell
 dotnet build AlignmentAudit/AlignmentAudit.csproj -c Release
-New-Item -ItemType Directory -Force server-mods/example.alignment-audit | Out-Null
+New-Item -ItemType Directory -Force mods/example.alignment-audit | Out-Null
 Copy-Item AlignmentAudit/manifest.json, AlignmentAudit/bin/Release/net10.0/AlignmentAudit.dll `
-    -Destination server-mods/example.alignment-audit
+    -Destination mods/example.alignment-audit
 ```
 
-Add `"example.alignment-audit"` to the existing `ServerMods` array in `config/server_settings.json`, or select the installed package in the desktop server settings. Restart the server and look for the `[Server mods]` initialization message. If you run a separate server installation, copy the package into its `server-mods/` and edit that installation's settings.
+Add `"example.alignment-audit"` to the existing `ServerMods` array in `config/server_settings.json`, or select the installed package in the desktop server settings. Restart the server and look for the `[Server mods]` initialization message. If you run a separate server installation, copy the package into its `mods/` and edit that installation's settings.
 
-You can also install this single-assembly example by copying `AlignmentAudit.dll` directly into `server-mods/` and using `"AlignmentAudit.dll"` as the `ServerMods` entry. Choose one installation form for the example.
+You can also install this single-assembly example by copying `AlignmentAudit.dll` directly into `mods/` and using `"AlignmentAudit.dll"` as the `ServerMods` entry. Choose one installation form for the example.
 
 Enter the world and change your character's alignment through the normal game flow. The server log should show `Alignment changed for character ...`. To exercise the route on the default local control port, supply a valid player token in `$playerToken` for the account you signed in with.
 

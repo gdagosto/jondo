@@ -13,7 +13,7 @@ namespace Jondo.Unity.Server.Network
         private static bool _isRunning;
 
         public static void Start(int port)
-            => Start(port, new ClientModCatalog(Paths.ClientModsDirectory, ServerSettings.Current.ClientMods));
+            => Start(port, new ClientModCatalog(Paths.ModsDirectory, ServerSettings.Current.ClientMods));
 
         internal static void Start(int port, ClientModCatalog clientMods, ServerModControlRoutes? modRoutes = null)
         {

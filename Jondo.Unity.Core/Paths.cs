@@ -72,9 +72,7 @@ namespace Jondo.Unity.Launcher
         /// </summary>
         public static string ServerSettingsFile => Path.Combine(Root, "config", "server_settings.json");
 
-        public static string ClientModsDirectory => Path.Combine(Root, "mods");
-
-        public static string ServerModsDirectory => Path.Combine(Root, "server-mods");
+        public static string ModsDirectory => Path.Combine(Root, "mods");
 
         /// <summary>
         /// The yearly events as the server's Events page leaves them: each one on its calendar, held
