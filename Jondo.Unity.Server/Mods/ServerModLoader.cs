@@ -1,4 +1,6 @@
 using System.Reflection;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
 using System.Runtime.Loader;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -61,14 +63,24 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
             host.Mod.StartGameplay();
     }
 
-    internal static string[] ListClientAssets(string directory)
+    internal static ServerModDescription[] ListInstalled(string directory)
     {
         try
         {
-            return Discover(directory, "", _ => { }).SelectMany(group => group)
-                .Select(entry => entry.Manifest is { } manifest && manifest.TryGetProperty("clientAsset", out var asset) &&
-                    asset.ValueKind == JsonValueKind.String ? Path.GetFileName(asset.GetString()) : null)
-                .OfType<string>().Where(ClientModManifest.IsDllName).ToArray();
+            return Discover(directory, "", _ => { }).Where(group => group.Count() == 1)
+                .Select(group =>
+                {
+                    var entry = group.Single();
+                    if (entry.Manifest is not { } manifest)
+                        return ReferencesServerMod(entry.Path)
+                            ? new ServerModDescription(group.Key, null, null, null, null, IsStandalone: true)
+                            : null;
+                    var schema = ServerModConfiguration.Read(manifest);
+                    string? name = manifest.TryGetProperty("settings", out var settings) ? ReadString(settings, "name") : null;
+                    string? asset = Path.GetFileName(ReadString(manifest, "clientAsset"));
+                    return new ServerModDescription(group.Key, name, ReadString(manifest, "version"),
+                        ClientModManifest.IsDllName(asset) ? asset : null, schema);
+                }).OfType<ServerModDescription>().ToArray();
         }
         catch (InvalidOperationException ex) when (ex.InnerException is IOException or UnauthorizedAccessException)
         {
@@ -76,19 +88,30 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
         }
     }
 
-    internal static ServerModConfiguration[] ListSettings(string directory)
+    // Identify loose server DLLs for the desktop without loading them into the process.
+    private static bool ReferencesServerMod(string path)
     {
         try
         {
-            return Discover(directory, "", _ => { }).Where(group => group.Count() == 1)
-                .Select(group => (group.Single().Manifest is { } manifest ? ServerModConfiguration.Read(manifest) : null)
-                    ?? new ServerModConfiguration(group.Key, null, null, [])).ToArray();
+            RejectLink(path);
+            using var file = File.OpenRead(path);
+            using var assembly = new PEReader(file);
+            if (!assembly.HasMetadata) return false;
+
+            var metadata = assembly.GetMetadataReader();
+            var strings = metadata.StringComparer;
+            return metadata.TypeReferences.Select(metadata.GetTypeReference).Any(type =>
+                strings.Equals(type.Name, nameof(IServerMod)) && strings.Equals(type.Namespace, typeof(IServerMod).Namespace));
         }
-        catch (InvalidOperationException ex) when (ex.InnerException is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or BadImageFormatException)
         {
-            return [];
+            return false;
         }
     }
+
+    private static string? ReadString(JsonElement element, string key) =>
+        element.ValueKind == JsonValueKind.Object && element.TryGetProperty(key, out var value) &&
+        value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
     private sealed record InstalledMod(string Path, JsonElement? Manifest);
 
@@ -167,8 +190,7 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
             string label = manifest == null ? modId : $"{Path.GetFileName(installed.Path)} ({modId})";
             var schema = installed.Manifest is { } metadata ? ServerModConfiguration.Read(metadata) : null;
             var configuration = ServerModConfiguration.Resolve(settings, modId, schema);
-            if (schema?.ActivationSetting is { } activation && configuration.TryGetProperty(activation, out var enabled)
-                && enabled.ValueKind == JsonValueKind.False)
+            if (!ServerModConfiguration.IsActive(schema, configuration))
                 return;
             host = new Host(log, label, ControlRoutes, configuration);
             string? clientPath = null;
@@ -393,3 +415,6 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
         }
     }
 }
+
+internal sealed record ServerModDescription(string Id, string? Name, string? Version, string? ClientAsset,
+    ServerModConfiguration? Configuration, bool IsStandalone = false);

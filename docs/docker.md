@@ -100,15 +100,16 @@ The image runs as the non-root `app` user and sets:
 
 ## Optional server mods
 
-Place standalone DLLs and unpacked packages on the Docker host and bind-mount that directory at
-`/app/server-mods`. For example, add this to a Compose override file next to
-`docker-compose.yml`.
+Put standalone DLLs and unpacked packages in `mods/` on the Docker host and bind-mount
+it at `/app/mods`. Include `JondoFix.dll` and any other client DLLs the server should
+offer, because this mount replaces the image's built-in `mods/` directory. Add this
+to a Compose override file next to `docker-compose.yml`.
 
 ```yaml
 services:
   jondo-server:
     volumes:
-      - ./server-mods:/app/server-mods:ro
+      - ./mods:/app/mods:ro
 ```
 
 Add the desired DLL filenames and package IDs to `ServerMods` in the container's

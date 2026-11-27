@@ -79,7 +79,7 @@ namespace Jondo.Unity.Server.Network
                     case Prefijo + "entrar": return Entrar(cuerpo, ip);
                     case Prefijo + "crear-cuenta": return CrearCuenta(cuerpo, ip);
                     case ClientModManifest.Route:
-                        return Mods(metodo, clientMods ?? new ClientModCatalog(Paths.ClientModsDirectory, ServerSettings.Current.ClientMods));
+                        return Mods(metodo, clientMods ?? new ClientModCatalog(Paths.ModsDirectory, ServerSettings.Current.ClientMods));
 
                     // ─── With a session ─────────────────────────────────────────────────────
                     // A token the base recognises is needed. The role does not matter: they are things

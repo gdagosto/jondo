@@ -12,7 +12,9 @@ try {
     $modules = [ordered]@{
         Cazacabezas = 'cazacabezas'
         Heroes = 'heroes'
-        HeroProgressionSync = 'hero-progression-sync'
+    }
+    if (Test-Path -LiteralPath (Join-Path $root 'HeroProgressionSync.Server/HeroProgressionSync.Server.csproj') -PathType Leaf) {
+        $modules['HeroProgressionSync'] = 'hero-progression-sync'
     }
     foreach ($module in $modules.Keys) {
         $id = $modules[$module]

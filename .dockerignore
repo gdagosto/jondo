@@ -23,6 +23,7 @@ DofusClient
 **/*.exe
 **/*.dll
 !mods/JondoFix.dll
+mods/*/**
 *.csv
 *.pcap
 *.pcapng
