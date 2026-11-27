@@ -13,7 +13,7 @@ while the package is active.
 ## Optional progression sync
 
 Extract `hero-progression-sync-server-mod.zip` from the matching JondoEmu release into
-`server-mods/`. Add `hero-progression-sync` alongside `heroes` in `ServerMods` and restart.
+`mods/`. Add `hero-progression-sync` alongside `heroes` in `ServerMods` and restart.
 It works while Hero mode is enabled.
 
 When the currently played character earns character XP, all other characters on the same account
