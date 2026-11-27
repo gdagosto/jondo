@@ -332,6 +332,7 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
             [typeof(IPartyWorld)] = Characters,
             [typeof(IMovementWorld)] = Characters,
             [typeof(IQuestWorld)] = Characters,
+            [typeof(ICharacterProgressionWorld)] = Characters,
             [typeof(IAlignmentWorld)] = Alignment,
             [typeof(IWorldStorage)] = Alignment,
             [typeof(ISimulatedPlayerWorld)] = Alignment,

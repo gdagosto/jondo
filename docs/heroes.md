@@ -10,6 +10,19 @@ Install the [Heroes server package](server-mod-migration.md#heroes), add `heroes
 eight places including the master. The server advertises the package's client DLL
 while the package is active.
 
+## Optional progression sync
+
+Extract `hero-progression-sync-server-mod.zip` from the matching JondoEmu release into
+`server-mods/`. Add `hero-progression-sync` alongside `heroes` in `ServerMods` and restart.
+It works while Hero mode is enabled.
+
+When the currently played character earns character XP, all other characters on the same account
+and game server get that exact XP total and level, including offline characters and characters
+with higher totals. When the played character changes a quest, the same characters get that
+quest's step, objectives, counters and completion state. The mirror replaces Heroes' quest
+action replay and item pooling. Quest items, kamas and other quest rewards are awarded to the
+character who performs the action.
+
 ## How a hero exists
 
 `Heroes.Server/HeroGroups.cs` owns the active group. The host loads each follower's sheet, bag

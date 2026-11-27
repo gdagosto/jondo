@@ -1,0 +1,10 @@
+{
+  "id": "hero-progression-sync",
+  "version": "1.0.0",
+  "serverApiVersion": 2,
+  "serverAssembly": "HeroProgressionSync.Server.dll",
+  "settings": {
+    "name": "Hero Progression Sync",
+    "fields": []
+  }
+}

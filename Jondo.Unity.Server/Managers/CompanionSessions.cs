@@ -31,7 +31,7 @@ namespace Jondo.Unity.Server.Managers
         internal static Task ShareQuestActionAsync(Func<GameSession, Task> apply,
             Func<ICompanion, bool>? participates = null, IReadOnlyCollection<int>? quests = null,
             Func<GameSession, LagCause?>? explain = null)
-            => Policy?.ShareQuestActionAsync(SessionContext.Current,
+            => ReplayPolicy(SessionContext.Current)?.ShareQuestActionAsync(SessionContext.Current,
                 async session =>
                 {
                     using var context = SessionContext.Push((GameSession)session);
@@ -46,10 +46,13 @@ namespace Jondo.Unity.Server.Managers
 
         internal static Task<bool> PoolQuestItemsAsync(GameSession session, IEnumerable<(int Item, int Count)> asked,
             Func<GameSession, bool> follows)
-            => Policy?.PoolQuestItemsAsync(session, asked, companion =>
+            => ReplayPolicy(session)?.PoolQuestItemsAsync(session, asked, companion =>
             {
                 using var context = SessionContext.Push((GameSession)companion);
                 return follows((GameSession)companion);
             }) ?? Task.FromResult(true);
+
+        private static IQuestSharingPolicy? ReplayPolicy(GameSession session)
+            => ServerModHooks.Get<IQuestProgressMirror>()?.MirrorsQuestProgress(session) == true ? null : Policy;
     }
 }

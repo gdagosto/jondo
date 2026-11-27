@@ -12667,6 +12667,9 @@ namespace Jondo.Unity.Server.Handlers
             bool azulGana = fight.SigueVivo(FightInstance.Azules);
 
             var gente = Publico(fight);
+            var experienceBefore = CharacterProgressionEvents.HasListeners
+                ? gente.ToDictionary(session => session, session => session.State.Experience)
+                : null;
             PlanRewards(fight);
             AlignmentWar.Plan(fight, azulGana);
             RecordLadder(fight);
@@ -12676,6 +12679,11 @@ namespace Jondo.Unity.Server.Handlers
                                             fight.HaGanado(sesion.State.CharacterId), azulGana);
             });
             SettleControlledParticipants(fight);
+            // Companion rewards are applied independently. Mirror the controller's final total after settlement.
+            if (experienceBefore != null)
+                foreach (var (session, experience) in experienceBefore)
+                    if (session.State.Experience > experience)
+                        CharacterProgressionEvents.ExperienceGained(session);
             ForgetRewards(fight);
             ForgetSurrenderVotes(fight);
             ChallengeWatcher.Forget(fight);
