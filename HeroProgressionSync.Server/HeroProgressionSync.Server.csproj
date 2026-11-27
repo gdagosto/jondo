@@ -3,7 +3,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <HeroProgressionSyncPackageDirectory Condition="'$(HeroProgressionSyncPackageDirectory)' == ''">$(MSBuildProjectDirectory)/../server-mods/hero-progression-sync</HeroProgressionSyncPackageDirectory>
+    <HeroProgressionSyncPackageDirectory Condition="'$(HeroProgressionSyncPackageDirectory)' == ''">$(MSBuildProjectDirectory)/../mods/hero-progression-sync</HeroProgressionSyncPackageDirectory>
   </PropertyGroup>
 
   <ItemGroup>
