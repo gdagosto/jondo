@@ -12,8 +12,6 @@ namespace Jondo.Unity.Server.Mods;
 internal sealed class ServerModLoader(Action<string> log) : IDisposable
 {
     private const string ManifestFile = "manifest.json";
-    private const string HeroesId = "heroes";
-    private const string BundledHeroesPrefix = "ServerMods.Heroes.";
     private static readonly Regex ModId = new(@"\A[A-Za-z0-9][A-Za-z0-9._-]*\z", RegexOptions.CultureInvariant);
     private readonly Stack<Host> _started = new();
     private int _stopped;
@@ -23,29 +21,24 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
     public ClientModCatalog.Asset[] ClientAssets => _started.Reverse().Select(host => host.ClientAsset)
         .OfType<ClientModCatalog.Asset>().ToArray();
 
-    internal static ServerModLoader LoadConfigured(string directory, ServerSettings settings, Action<string> log)
-    {
-        var enabledIds = settings.HeroMode
-            ? settings.ServerMods.Append(HeroesId)
-            : settings.ServerMods.Where(id => !IsHeroes(id));
-        return Load(directory, enabledIds.ToArray(), log, bundleHeroes: settings.HeroMode);
-    }
-
-    private static bool IsHeroes(string id) => string.Equals(id, HeroesId, StringComparison.OrdinalIgnoreCase);
+    internal static ServerModLoader LoadConfigured(string directory, ServerSettings settings, Action<string> log,
+        Func<string, IServerMod>? createMod = null)
+        => Load(directory, settings.ServerMods, log, settings, createMod);
 
     public static ServerModLoader Load(string directory, string[] enabledIds, Action<string> log)
-        => Load(directory, enabledIds, log, bundleHeroes: false);
+        => Load(directory, enabledIds, log, new ServerSettings(), null);
 
-    private static ServerModLoader Load(string directory, string[] enabledIds, Action<string> log, bool bundleHeroes)
+    private static ServerModLoader Load(string directory, string[] enabledIds, Action<string> log, ServerSettings settings,
+        Func<string, IServerMod>? createMod)
     {
         var loader = new ServerModLoader(log);
         if (enabledIds.Length == 0) return loader;
 
         try
         {
-            var packages = Discover(directory, enabledIds[0], log);
+            var installed = Discover(directory, enabledIds[0], log);
             foreach (string id in enabledIds.Distinct(StringComparer.OrdinalIgnoreCase))
-                loader.StartPackage(directory, packages, id, bundleHeroes);
+                loader.StartMod(directory, installed, id, settings, createMod);
             return loader;
         }
         catch
@@ -68,24 +61,60 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
             host.Mod.StartGameplay();
     }
 
-    private static ILookup<string, (string Directory, JsonElement Manifest)> Discover(
+    internal static string[] ListClientAssets(string directory)
+    {
+        try
+        {
+            return Discover(directory, "", _ => { }).SelectMany(group => group)
+                .Select(entry => entry.Manifest is { } manifest && manifest.TryGetProperty("clientAsset", out var asset) &&
+                    asset.ValueKind == JsonValueKind.String ? Path.GetFileName(asset.GetString()) : null)
+                .OfType<string>().Where(ClientModManifest.IsDllName).ToArray();
+        }
+        catch (InvalidOperationException ex) when (ex.InnerException is IOException or UnauthorizedAccessException)
+        {
+            return [];
+        }
+    }
+
+    internal static ServerModConfiguration[] ListSettings(string directory)
+    {
+        try
+        {
+            return Discover(directory, "", _ => { }).Where(group => group.Count() == 1)
+                .Select(group => (group.Single().Manifest is { } manifest ? ServerModConfiguration.Read(manifest) : null)
+                    ?? new ServerModConfiguration(group.Key, null, null, [])).ToArray();
+        }
+        catch (InvalidOperationException ex) when (ex.InnerException is IOException or UnauthorizedAccessException)
+        {
+            return [];
+        }
+    }
+
+    private sealed record InstalledMod(string Path, JsonElement? Manifest);
+
+    private static ILookup<string, InstalledMod> Discover(
         string directory, string firstEnabledId, Action<string> log)
     {
         string[] packages;
+        string[] standaloneAssemblies;
         try
         {
-            packages = Directory.GetDirectories(Path.GetFullPath(directory));
+            directory = Path.GetFullPath(directory);
+            packages = Directory.GetDirectories(directory);
+            standaloneAssemblies = Directory.GetFiles(directory, "*.dll",
+                new EnumerationOptions { MatchCasing = MatchCasing.CaseInsensitive, AttributesToSkip = 0 });
         }
         catch (DirectoryNotFoundException)
         {
             packages = [];
+            standaloneAssemblies = [];
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             throw StartupError(firstEnabledId, ex);
         }
 
-        var manifests = new List<(string Id, string Directory, JsonElement Manifest)>();
+        var installed = new List<(string Id, InstalledMod Mod)>();
         foreach (string package in packages.Order(StringComparer.Ordinal))
         {
             try
@@ -97,7 +126,7 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
                 if (manifest.ValueKind != JsonValueKind.Object || !manifest.TryGetProperty("id", out var property) ||
                     property.ValueKind != JsonValueKind.String || property.GetString() is not { } id || !ModId.IsMatch(id))
                     throw new InvalidDataException("Invalid or missing 'id'.");
-                manifests.Add((id, package, manifest.Clone()));
+                installed.Add((id, new InstalledMod(package, manifest.Clone())));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or JsonException)
             {
@@ -105,47 +134,56 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
             }
         }
 
-        return manifests.ToLookup(entry => entry.Id, entry => (entry.Directory, entry.Manifest),
-            StringComparer.OrdinalIgnoreCase);
+        foreach (string assembly in standaloneAssemblies.Order(StringComparer.Ordinal))
+        {
+            string name = Path.GetFileName(assembly);
+            if (ModId.IsMatch(name) && name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+                installed.Add((name, new InstalledMod(assembly, null)));
+        }
+
+        return installed.ToLookup(entry => entry.Id, entry => entry.Mod, StringComparer.OrdinalIgnoreCase);
     }
 
-    private void StartPackage(string directory, ILookup<string, (string Directory, JsonElement Manifest)> packages,
-        string id, bool bundleHeroes)
+    private void StartMod(string directory, ILookup<string, InstalledMod> installedMods,
+        string id, ServerSettings settings, Func<string, IServerMod>? createMod)
     {
         Host host = null;
         try
         {
             if (id == null || !ModId.IsMatch(id))
                 throw new InvalidDataException("Invalid ID in the ServerMods setting.");
-            var matches = packages[id].ToArray();
-            bool bundled = matches.Length == 0 && bundleHeroes && IsHeroes(id);
-            if (matches.Length == 0 && !bundled)
-                throw new InvalidDataException($"No package with this ID was found in '{directory}'.");
+            var matches = installedMods[id].ToArray();
+            if (matches.Length == 0)
+            {
+                log($"[Server mods] {id}: package not found in '{directory}'; skipped.");
+                return;
+            }
             if (matches.Length > 1)
-                throw new InvalidDataException($"Duplicate mod ID in packages: {string.Join(", ", matches.Select(match => Path.GetFileName(match.Directory)))}.");
+                throw new InvalidDataException($"Duplicate mod ID in packages or standalone DLLs: {string.Join(", ", matches.Select(match => Path.GetFileName(match.Path)))}.");
 
-            string package = bundled ? null : matches[0].Directory;
-            Manifest manifest;
-            if (bundled)
-            {
-                using var manifestStream = OpenBundledHeroesFile(ManifestFile);
-                manifest = JsonSerializer.Deserialize<Manifest>(manifestStream);
-            }
-            else
-            {
-                manifest = matches[0].Manifest.Deserialize<Manifest>();
-            }
-            string label = bundled ? $"bundled ({manifest.Id})" : $"{Path.GetFileName(package)} ({manifest.Id})";
-            host = new Host(log, label, ControlRoutes);
-            var mod = LoadPackage(package, manifest, host, out string? clientPath);
+            var installed = matches[0];
+            var manifest = installed.Manifest?.Deserialize<Manifest>();
+            string modId = manifest?.Id ?? Path.GetFileName(installed.Path);
+            string label = manifest == null ? modId : $"{Path.GetFileName(installed.Path)} ({modId})";
+            var schema = installed.Manifest is { } metadata ? ServerModConfiguration.Read(metadata) : null;
+            var configuration = ServerModConfiguration.Resolve(settings, modId, schema);
+            if (schema?.ActivationSetting is { } activation && configuration.TryGetProperty(activation, out var enabled)
+                && enabled.ValueKind == JsonValueKind.False)
+                return;
+            host = new Host(log, label, ControlRoutes, configuration);
+            string? clientPath = null;
+            var mod = manifest == null
+                ? LoadAssembly(Path.GetDirectoryName(installed.Path), installed.Path, null, host, modId, createMod)
+                : LoadPackage(installed.Path, manifest, host, createMod, out clientPath);
             mod.Initialize(host);
             host.Mod = mod;
             if (ClientModManifest.IsDllName(Path.GetFileName(clientPath)))
             {
-                string root = Path.GetDirectoryName(package);
+                string root = Path.GetDirectoryName(installed.Path);
                 host.ClientAsset = new ClientModCatalog.Asset(root, Path.GetRelativePath(root, clientPath));
             }
-            log($"[Server mods] {label} initialized (version {manifest.Version}).");
+            string version = manifest == null ? "" : $" (version {manifest.Version})";
+            log($"[Server mods] {label} initialized{version}.");
             _started.Push(host);
         }
         catch (Exception ex)
@@ -155,36 +193,33 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
         }
     }
 
-    private static IServerMod LoadPackage(string package, Manifest manifest, Host host, out string? clientPath)
+    private static IServerMod LoadPackage(string package, Manifest manifest, Host host,
+        Func<string, IServerMod>? createMod, out string? clientPath)
     {
         if (string.IsNullOrWhiteSpace(manifest.Version))
             throw new InvalidDataException("Missing 'version'.");
         if (manifest.ServerApiVersion != ServerModApi.Version)
             throw new InvalidDataException($"Expected 'serverApiVersion' {ServerModApi.Version}, got {manifest.ServerApiVersion}.");
 
-        if (package == null)
-        {
-            using var stream = OpenBundledHeroesFile(manifest.ServerAssembly);
-            var bundledContext = new PackageLoadContext(null, null, null);
-            host.RegisterCleanup(bundledContext.Unload);
-            clientPath = null;
-            return CreateMod(bundledContext.LoadFromStream(stream));
-        }
-
         string assemblyPath = RequirePackageFile(package, manifest.ServerAssembly, "serverAssembly");
         clientPath = manifest.ClientAsset == null ? null : RequirePackageFile(package, manifest.ClientAsset, "clientAsset");
         if (string.Equals(clientPath, assemblyPath, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("'clientAsset' cannot be the server assembly.");
 
+        return LoadAssembly(package, assemblyPath, clientPath, host, manifest.Id, createMod);
+    }
+
+    private static IServerMod LoadAssembly(string directory, string assemblyPath, string? clientPath, Host host,
+        string id, Func<string, IServerMod>? createMod)
+    {
+        RejectLink(assemblyPath);
+        if (createMod != null) return createMod(id);
+
         RejectLink(Path.ChangeExtension(assemblyPath, ".deps.json"));
-        var context = new PackageLoadContext(package, assemblyPath, clientPath);
+        var context = new PackageLoadContext(directory, assemblyPath, clientPath);
         host.RegisterCleanup(context.Unload);
         return CreateMod(context.LoadPackageAssembly(assemblyPath));
     }
-
-    private static Stream OpenBundledHeroesFile(string name)
-        => typeof(ServerModLoader).Assembly.GetManifestResourceStream(BundledHeroesPrefix + name)
-           ?? throw new FileNotFoundException($"Bundled Heroes package file '{name}' was not found.");
 
     private static IServerMod CreateMod(Assembly assembly)
     {
@@ -246,8 +281,8 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
         [property: JsonPropertyName("serverAssembly")] string ServerAssembly,
         [property: JsonPropertyName("clientAsset")] string ClientAsset);
 
-    private sealed class Host(Action<string> log, string label, ServerModControlRoutes controlRoutes)
-        : IServerModHost, IHuntModHost, IHeroesControl, IHeroesModHost, IFightModHost
+    private sealed class Host(Action<string> log, string label, ServerModControlRoutes controlRoutes, JsonElement settings)
+        : IServerModHost
     {
         private readonly Stack<Action> _cleanup = new();
         private bool _stopping;
@@ -266,37 +301,35 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
             }
         }
 
-        IHuntWorld IHuntModHost.World { get; } = new HuntWorld();
-
-        ServerModControlResponse IHeroesControl.Handle(HeroesControlOperation operation, AuthenticatedControlRequest request)
-            => ControlApi.HandleHeroes(operation, request);
-
-        IHeroesWorld IHeroesModHost.HeroesWorld { get; } = new HeroesWorld();
-
-        void IHeroesModHost.RegisterHeroesGameplay(IHeroesGameplay gameplay)
+        private static readonly CharacterWorld Characters = new();
+        private static readonly AlignmentWorld Alignment = new();
+        private static readonly Dictionary<Type, object> Services = new()
         {
+            [typeof(ICharacterWorld)] = Characters,
+            [typeof(ICompanionWorld)] = Characters,
+            [typeof(IPartyWorld)] = Characters,
+            [typeof(IMovementWorld)] = Characters,
+            [typeof(IQuestWorld)] = Characters,
+            [typeof(IAlignmentWorld)] = Alignment,
+            [typeof(IWorldStorage)] = Alignment,
+            [typeof(ISimulatedPlayerWorld)] = Alignment,
+        };
+
+        public JsonElement Settings => settings;
+
+        public T GetService<T>() where T : class => Services.TryGetValue(typeof(T), out var service)
+            ? (T)service
+            : throw new InvalidOperationException($"Unknown server mod service '{typeof(T).FullName}'.");
+
+        public void RegisterHook<T>(T hook) where T : class
+        {
+            if (!typeof(T).IsInterface || typeof(T).Assembly != typeof(IServerMod).Assembly)
+                throw new ArgumentException("Hooks must implement a shared server mod contract interface.", nameof(hook));
+
             lock (_cleanup)
             {
                 if (_stopping) throw new InvalidOperationException("The server mod is stopping.");
-                _cleanup.Push(Managers.Heroes.Register(gameplay));
-            }
-        }
-
-        void IHuntModHost.RegisterHuntGameplay(IHuntGameplay gameplay)
-        {
-            lock (_cleanup)
-            {
-                if (_stopping) throw new InvalidOperationException("The server mod is stopping.");
-                _cleanup.Push(HuntGameplay.Register(gameplay));
-            }
-        }
-
-        void IFightModHost.RegisterFightParticipantPolicy(IFightParticipantPolicy policy)
-        {
-            lock (_cleanup)
-            {
-                if (_stopping) throw new InvalidOperationException("The server mod is stopping.");
-                _cleanup.Push(FightParticipants.Register(policy));
+                _cleanup.Push(ServerModHooks.Register(hook));
             }
         }
 
@@ -329,7 +362,7 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
     private sealed class PackageLoadContext(string package, string assemblyPath, string? clientPath) : AssemblyLoadContext(isCollectible: true)
     {
         private static readonly Assembly ContractAssembly = typeof(IServerMod).Assembly;
-        private readonly AssemblyDependencyResolver _resolver = assemblyPath == null ? null : new(assemblyPath);
+        private readonly AssemblyDependencyResolver _resolver = new(assemblyPath);
 
         public Assembly LoadPackageAssembly(string path)
         {
@@ -342,8 +375,6 @@ internal sealed class ServerModLoader(Action<string> log) : IDisposable
         {
             if (string.Equals(name.Name, ContractAssembly.GetName().Name, StringComparison.OrdinalIgnoreCase))
                 return ContractAssembly;
-
-            if (_resolver == null) return null;
 
             string path = _resolver.ResolveAssemblyToPath(name);
             if (path == null && string.IsNullOrEmpty(name.CultureName))

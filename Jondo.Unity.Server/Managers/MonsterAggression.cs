@@ -1,3 +1,4 @@
+using Jondo.Unity.ServerMods;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -156,7 +157,7 @@ namespace Jondo.Unity.Server.Managers
         {
             if (!Applies(mapId) || !MapAllows(mapId)) return null;
             // Nor on a hunt's prey: no fight but against his hunter while it lasts.
-            if (HuntGameplay.HuntedNow(characterId)) return null;
+            if (PlayerPolicies.BlocksAutomaticEncounter(characterId, AutomaticEncounter.MonsterAggression)) return null;
             var groups = MobSpawnManager.GetMobsForMap(mapId).Where(g => !FightHandler.IsGroupFighting(g.MobId));
             return Nearest(groups, GuildRaidManager.ResolverFor(characterId), playerLevel, cell);
         }

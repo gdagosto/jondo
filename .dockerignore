@@ -23,8 +23,6 @@ DofusClient
 **/*.exe
 **/*.dll
 !mods/JondoFix.dll
-!mods/Cazacabezas.dll
-!mods/Heroes.dll
 *.csv
 *.pcap
 *.pcapng

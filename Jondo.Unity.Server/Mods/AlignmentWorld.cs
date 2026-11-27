@@ -8,28 +8,19 @@ using Microsoft.Data.Sqlite;
 
 namespace Jondo.Unity.Server.Mods;
 
-internal sealed class HuntWorld : IHuntWorld
+internal sealed class AlignmentWorld : IAlignmentWorld, IWorldStorage, ISimulatedPlayerWorld
 {
-    public HuntSettings Settings
-    {
-        get
-        {
-            var settings = ServerSettings.Current.Cazacabezas;
-            return new(settings.Enabled, settings.HuntWindowMinutes, settings.RestMinutes);
-        }
-    }
-
-    public SelectedHunter? FindSelectedCharacter(long accountId)
+    public SelectedCharacter? FindSelectedCharacter(long accountId)
         => ControlApi.InTheWorld(accountId) is { State: var state }
             ? new(state.CharacterId, state.CharacterName, state.CharacterLevel)
             : null;
 
-    public HuntCharacter? FindCharacter(long characterId)
+    public WorldCharacter? FindCharacter(long characterId)
         => DatabaseManager.GetCharacterById(characterId) is { } row
             ? new(characterId, row.Name, row.Level, row.Breed)
             : null;
 
-    public IEnumerable<HuntBoardCharacter> FindPvpCharacters(int side, int minimumLevel)
+    public IEnumerable<PvpCharacter> FindPvpCharacters(int side, int minimumLevel)
     {
         using var connection = OpenWorldDatabase();
         using var command = connection.CreateCommand();
@@ -44,19 +35,19 @@ internal sealed class HuntWorld : IHuntWorld
                 reader.GetString(4));
     }
 
-    public HuntPresence? FindPresence(long characterId)
+    public CharacterPresence? FindPresence(long characterId)
         => SessionRegistry.FindByCharacter(characterId) is { State: var state } session
             ? new(state.CharacterName, state.Language, session.IsInWorld, state.IsInFight, state.MapId)
             : null;
 
-    public HuntLocation Locate(long mapId)
+    public WorldLocation Locate(long mapId)
     {
         var map = MapManager.GetMapInfo(mapId);
         return new(map != null,
             map != null && MapManager.OnTheWorldMap(mapId) ? (map.PosX, map.PosY) : null);
     }
 
-    public HuntAlignment AlignmentOf(long characterId)
+    public PvpAlignment AlignmentOf(long characterId)
     {
         var alignment = Alignments.Of(characterId);
         return new(alignment.Side, alignment.Side switch
@@ -67,7 +58,7 @@ internal sealed class HuntWorld : IHuntWorld
         }, alignment.Pvp, alignment.HonourGrade, alignment.Honour, alignment.Dishonour);
     }
 
-    DbConnection IHuntWorld.OpenWorldDatabase() => OpenWorldDatabase();
+    DbConnection IWorldStorage.OpenWorldDatabase() => OpenWorldDatabase();
 
     private static SqliteConnection OpenWorldDatabase()
     {
@@ -114,7 +105,7 @@ internal sealed class HuntWorld : IHuntWorld
         var session = SessionRegistry.FindByCharacter(characterId);
         if (session == null || !session.IsInWorld) return;
         try { await session.SendAsync(ConnectionProtocol.Push(Op.Lqn, payload)); }
-        catch (Exception ex) { Program.LogDebug($"[Head hunts] {characterId} could not be told: {ex.Message}"); }
+        catch (Exception ex) { Program.LogDebug($"[Character notices] {characterId} could not be told: {ex.Message}"); }
     }
 
     public IDisposable QuietForBots(long first, long second)

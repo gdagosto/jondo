@@ -8,7 +8,7 @@
 publish/
 runtimes/
 /host-artifacts/
-/server-mods/cazacabezas/
+/server-mods/*/
 .avalonia-build-tasks/
 *.pdb
 *.deps.json
@@ -16,8 +16,8 @@ runtimes/
 # App dependencies go inside the single-file executables. Client mods ship as DLLs.
 *.dll
 !/mods/JondoFix.dll
-!/mods/Cazacabezas.dll
-!/mods/Heroes.dll
+!/Cazacabezas/Cazacabezas.dll
+!/Heroes/Heroes.dll
 !/JondoModLoader/JondoModLoader.dll
 
 # ─── Executables ────────────────────────────────────────────────────────────

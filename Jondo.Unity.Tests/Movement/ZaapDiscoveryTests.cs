@@ -4,7 +4,6 @@ using Jondo.Unity.Protocol;
 using Jondo.Unity.Server;
 using Jondo.Unity.Server.Handlers;
 using Jondo.Unity.Server.Managers;
-using Jondo.Unity.Server.Mods;
 using Jondo.Unity.Server.Network;
 using Jondo.Unity.Tests.Economy;
 using Microsoft.Data.Sqlite;
@@ -12,7 +11,6 @@ using Xunit;
 
 namespace Jondo.Unity.Tests.Movement;
 
-[Collection("Heroes gameplay")]
 public sealed class ZaapDiscoveryTests
 {
     [Fact]
@@ -77,62 +75,6 @@ public sealed class ZaapDiscoveryTests
                 DELETE FROM Characters WHERE Id = $character;
                 """;
             delete.Parameters.AddWithValue("$character", character);
-            delete.ExecuteNonQuery();
-        }
-    }
-
-    [Fact]
-    public async Task A_hero_beside_his_master_discovers_the_zaap_with_him()
-    {
-        using var package = ServerModLoader.Load(
-            Path.Combine(AppContext.BaseDirectory, "ServerModFixtures"), ["heroes"], Console.WriteLine);
-        const long master = 8_861_100_011, hero = 8_861_100_012, stranger = 8_861_100_013;
-        MapManager.Initialize();
-        Interactives.Initialize();
-
-        using var database = new SqliteConnection(DatabaseManager.WorldConnectionString);
-        database.Open();
-        ZaapDiscoveries.EnsureTable(database);
-        using var insert = database.CreateCommand();
-        insert.CommandText = """
-            INSERT INTO Characters (Id, AccountId, Name, Breed, Sex) VALUES
-                ($master, $master, 'ZaapMasterTest', 1, 0),
-                ($hero, $master, 'ZaapHeroTest', 2, 0),
-                ($stranger, $stranger, 'ZaapStrangerTest', 3, 0);
-            """;
-        insert.Parameters.AddWithValue("$master", master);
-        insert.Parameters.AddWithValue("$hero", hero);
-        insert.Parameters.AddWithValue("$stranger", stranger);
-        insert.ExecuteNonQuery();
-
-        var settings = ServerSettings.Current;
-        bool previous = settings.RequireZaapDiscovery;
-        try
-        {
-            settings.RequireZaapDiscovery = false;
-            long zaap = ZaapDiscoveries.KnownMaps(master).First(map => MapManager.GetMapInfo(map) != null);
-            settings.RequireZaapDiscovery = true;
-            Assert.Empty(ZaapDiscoveries.KnownMaps(hero));
-
-            await using var pipe = await ClientPipe.OpenAsync(master, master, zaap);
-            Assert.Equal("ok", Heroes.Connect(pipe.Session, hero));
-
-            Assert.Equal(zaap, Heroes.SessionOf(hero)?.MapId);
-            Assert.Equal(zaap, Assert.Single(ZaapDiscoveries.KnownMaps(hero)));
-            Assert.Empty(ZaapDiscoveries.KnownMaps(stranger));
-        }
-        finally
-        {
-            Heroes.DisconnectAll(master);
-            settings.RequireZaapDiscovery = previous;
-            using var delete = database.CreateCommand();
-            delete.CommandText = """
-                DELETE FROM CharacterZaapDiscoveries WHERE CharacterId IN ($master, $hero, $stranger);
-                DELETE FROM Characters WHERE Id IN ($master, $hero, $stranger);
-                """;
-            delete.Parameters.AddWithValue("$master", master);
-            delete.Parameters.AddWithValue("$hero", hero);
-            delete.Parameters.AddWithValue("$stranger", stranger);
             delete.ExecuteNonQuery();
         }
     }

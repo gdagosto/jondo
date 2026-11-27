@@ -6,10 +6,10 @@ internal sealed partial class HeroGroups : IFightParticipantPolicy
 {
     public IReadOnlyList<ControlledFightParticipant> SelectOpeningParticipants(long openerId, int places)
         => Of(openerId).Where(hero => !hero.Session.IsInFight).Take(places)
-            .Select(hero => new ControlledFightParticipant(hero.Session, hero.MasterId)).ToArray();
+            .Select(hero => new ControlledFightParticipant(hero.Session, hero.ControllerId)).ToArray();
 
     public ControlledFightParticipant? FindParticipant(long characterId)
-        => Find(characterId) is { } hero ? new(hero.Session, hero.MasterId) : null;
+        => Find(characterId) is { } hero ? new(hero.Session, hero.ControllerId) : null;
 
     public bool ShouldPassTurn(long characterId) => Find(characterId)?.AutoPass == true;
 
@@ -28,7 +28,7 @@ internal sealed partial class HeroGroups : IFightParticipantPolicy
 
     public IReadOnlyList<(long Giver, long Recipient)> SelectLootRecipients(IReadOnlyList<long> winners)
     {
-        var groups = winners.GroupBy(id => Find(id)?.MasterId ?? id);
+        var groups = winners.GroupBy(id => Find(id)?.ControllerId ?? id);
         var recipients = new List<(long Giver, long Recipient)>();
         foreach (var group in groups)
         {
@@ -40,5 +40,5 @@ internal sealed partial class HeroGroups : IFightParticipantPolicy
         return recipients;
     }
 
-    public Task RestoreFollowerPresenceAsync(IHeroSession controller) => MasterMovedAsync(controller, 0);
+    public Task RestoreFollowerPresenceAsync(ICharacterSession controller) => MasterMovedAsync(controller, 0);
 }

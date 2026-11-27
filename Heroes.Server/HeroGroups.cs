@@ -2,18 +2,20 @@ using Jondo.Unity.ServerMods;
 
 namespace Heroes.Server;
 
-internal sealed partial class HeroGroups(IHeroesWorld world, Action<string> log) : IHeroesGameplay
+internal sealed partial class HeroGroups(ICompanionWorld companions, IPartyWorld parties, IMovementWorld movement,
+    IQuestWorld questWorld, HeroesSettings settings, Action<string> log)
+    : ICompanionSessionPolicy, IPartyMembershipPolicy, ITradeRoutingPolicy, ICompanionMovement, IQuestSharingPolicy, IDungeonPartyPolicy
 {
-    private sealed class Member(IHeroSession master, IHeroSession session) : IHeroMember
+    internal sealed class Member(ICharacterSession master, ICharacterSession session) : ICompanion
     {
-        public IHeroSession Owner { get; } = master;
+        public ICharacterSession Owner { get; } = master;
         public long CharacterId => Session.CharacterId;
-        public long MasterId { get; set; } = master.CharacterId;
-        public IHeroSession Session { get; } = session;
+        public long ControllerId { get; set; } = master.CharacterId;
+        public ICharacterSession Session { get; } = session;
         public bool AutoPass { get; set; }
     }
 
-    private sealed record Group(long MasterId, (long Id, bool AutoPass)[] Heroes, long LootTo, DateTime LeftAt);
+    private sealed record Group(long ControllerId, (long Id, bool AutoPass)[] Heroes, long LootTo, DateTime LeftAt);
 
     private readonly object _gate = new();
     private readonly Dictionary<long, List<Member>> _byMaster = new();
@@ -28,19 +30,21 @@ internal sealed partial class HeroGroups(IHeroesWorld world, Action<string> log)
     private static readonly TimeSpan SwitchWaits = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan GroupWaits = TimeSpan.FromMinutes(3);
 
-    public int Max => Math.Clamp(world.MaxHeroes, 1, 7);
+    public int Max => Math.Clamp(settings.MaxHeroes, 1, 7);
 
-    public IReadOnlyList<IHeroMember> Of(long masterId)
+    public IReadOnlyList<ICompanion> Of(long masterId)
     {
         lock (_gate) return _byMaster.TryGetValue(masterId, out var list) ? list.ToArray() : [];
     }
 
-    public IHeroMember? Find(long characterId)
+    ICompanion? ICompanionSessionPolicy.Find(long characterId) => Find(characterId);
+
+    internal Member? Find(long characterId)
     {
         lock (_gate) return _byHero.GetValueOrDefault(characterId);
     }
 
-    public IHeroMember? Named(string name)
+    private ICompanion? Named(string name)
     {
         if (string.IsNullOrWhiteSpace(name)) return null;
         lock (_gate)
@@ -59,7 +63,7 @@ internal sealed partial class HeroGroups(IHeroesWorld world, Action<string> log)
             if (_stopping) return false;
             if (characterId == 0 || LootTo(masterId) == characterId)
                 _lootTo.Remove(masterId);
-            else if (characterId == masterId || Find(characterId)?.MasterId == masterId)
+            else if (characterId == masterId || Find(characterId)?.ControllerId == masterId)
                 _lootTo[masterId] = characterId;
             else
                 return false;
@@ -71,7 +75,7 @@ internal sealed partial class HeroGroups(IHeroesWorld world, Action<string> log)
     {
         lock (_gate)
         {
-            if (!_byHero.TryGetValue(heroId, out var hero) || hero.MasterId != masterId) return false;
+            if (!_byHero.TryGetValue(heroId, out var hero) || hero.ControllerId != masterId) return false;
             hero.AutoPass = on;
             return true;
         }
@@ -86,14 +90,18 @@ internal sealed partial class HeroGroups(IHeroesWorld world, Action<string> log)
     {
         lock (_gate)
         {
-            if (Find(heroId)?.MasterId != masterId) return false;
+            if (Find(heroId)?.ControllerId != masterId) return false;
             if (on) _questSyncOff.Remove(heroId);
-            else _questSyncOff.Add(heroId);
+            else
+            {
+                _questSyncOff.Add(heroId);
+                _questLags.TryRemove(heroId, out _);
+            }
             return true;
         }
     }
 
-    public string Connect(IHeroSession master, long heroId)
+    public string Connect(ICharacterSession master, long heroId)
     {
         long masterId = master.CharacterId;
         if (heroId == masterId) return "self";
@@ -104,8 +112,8 @@ internal sealed partial class HeroGroups(IHeroesWorld world, Action<string> log)
         {
             if (_stopping) return "off";
             if (!master.IsInWorld || _byHero.ContainsKey(masterId)) return "world";
-            if (!world.OwnsCharacter(master, heroId)) return "account";
-            if (_transitioning.Contains(heroId) || world.IsClientOnline(heroId)) return "online";
+            if (!companions.OwnsCharacter(master, heroId)) return "account";
+            if (_transitioning.Contains(heroId) || companions.IsClientOnline(heroId)) return "online";
             if (_byHero.ContainsKey(heroId)) return "already";
             _byMaster.TryGetValue(masterId, out var list);
             if (list != null)
@@ -114,7 +122,7 @@ internal sealed partial class HeroGroups(IHeroesWorld world, Action<string> log)
                 if (list.Count >= Max) return "full";
             }
 
-            var session = world.LoadFollower(master, heroId);
+            var session = companions.LoadFollower(master, heroId);
             if (session == null) return "missing";
             hero = new Member(master, session);
             if (list == null) _byMaster[masterId] = list = [];
@@ -127,8 +135,8 @@ internal sealed partial class HeroGroups(IHeroesWorld world, Action<string> log)
         {
             log($"{master.CharacterName} connects {hero.Session.CharacterName} ({heroId}) as a hero.");
             if (master.HasClient) Run(() => ArriveAsync(master, hero), heroId, "appear");
-            ChangeParty(() => world.JoinMasterPartyAsync(master, heroId), heroId);
-            world.NotifyPresence(heroId);
+            ChangeParty(() => AddFollowerToPartyAsync(master, heroId), heroId);
+            companions.NotifyPresence(heroId);
             return "ok";
         }
         finally { EndTransition(heroId); }
@@ -140,7 +148,7 @@ internal sealed partial class HeroGroups(IHeroesWorld world, Action<string> log)
         lock (_gate)
         {
             if (_transitioning.Contains(heroId) || !_byHero.TryGetValue(heroId, out var found)
-                || found.MasterId != masterId || found.Session.IsInFight)
+                || found.ControllerId != masterId || found.Session.IsInFight)
                 return false;
             hero = found;
             Detach(hero);
@@ -178,11 +186,11 @@ internal sealed partial class HeroGroups(IHeroesWorld world, Action<string> log)
         }
     }
 
-    public void MasterLeft(IHeroSession master) => DisconnectGroup(master.CharacterId, master);
+    public void MasterLeft(ICharacterSession master) => DisconnectGroup(master.CharacterId, master);
 
     public void DisconnectAll(long masterId) => DisconnectGroup(masterId, null);
 
-    private void DisconnectGroup(long masterId, IHeroSession? owner)
+    private void DisconnectGroup(long masterId, ICharacterSession? owner)
     {
         Member[] gone;
         lock (_gate)
@@ -214,7 +222,7 @@ internal sealed partial class HeroGroups(IHeroesWorld world, Action<string> log)
         foreach (var hero in gone) SaveDetached(hero);
     }
 
-    public void Regroup(IHeroSession master)
+    public void Regroup(ICharacterSession master)
     {
         Group? group;
         lock (_gate)
@@ -223,17 +231,17 @@ internal sealed partial class HeroGroups(IHeroesWorld world, Action<string> log)
         }
         if (DateTime.UtcNow - group.LeftAt > GroupWaits || master.IsInFight) return;
         long id = master.CharacterId;
-        foreach (var (member, autoPass) in group.Heroes.Prepend((group.MasterId, false)))
+        foreach (var (member, autoPass) in group.Heroes.Prepend((group.ControllerId, false)))
             if (member != id && Connect(master, member) == "ok" && autoPass) SetAutoPass(id, member, true);
         if (group.LootTo != 0) SetLootTo(id, group.LootTo);
     }
 
-    public bool AskSwitch(IHeroSession master, long heroId)
+    public bool AskSwitch(ICharacterSession master, long heroId)
     {
         lock (_gate)
         {
             var hero = Find(heroId);
-            if (_stopping || !master.IsInWorld || hero?.MasterId != master.CharacterId ||
+            if (_stopping || !master.IsInWorld || hero?.ControllerId != master.CharacterId ||
                 master.IsInFight || hero.Session.IsInFight) return false;
             _switchTo[master.AccountId] = (heroId, DateTime.UtcNow);
             return true;
@@ -260,7 +268,7 @@ internal sealed partial class HeroGroups(IHeroesWorld world, Action<string> log)
     private void Detach(Member hero)
     {
         _transitioning.Add(hero.CharacterId);
-        long masterId = hero.MasterId;
+        long masterId = hero.ControllerId;
         _byHero.Remove(hero.CharacterId);
         if (LootTo(masterId) == hero.CharacterId) _lootTo.Remove(masterId);
         var list = _byMaster[masterId];
@@ -277,11 +285,11 @@ internal sealed partial class HeroGroups(IHeroesWorld world, Action<string> log)
     private void Save(Member hero)
     {
         long id = hero.CharacterId;
-        Run(() => world.RemoveActorAsync(hero.Session.Position.MapId, id), id, "leave the map");
-        ChangeParty(() => world.RemovePartyMemberAsync(id), id);
-        try { world.SaveFollower(hero.Session); }
+        Run(() => movement.RemoveActorAsync(hero.Session.Position.MapId, id), id, "leave the map");
+        ChangeParty(() => parties.RemovePartyMemberAsync(id), id);
+        try { companions.SaveFollower(hero.Session); }
         catch (Exception ex) { log($"{id} could not save: {ex.Message}"); }
-        world.NotifyPresence(id);
+        companions.NotifyPresence(id);
     }
 
     private void ChangeParty(Func<Task> change, long heroId)
@@ -309,6 +317,7 @@ internal sealed partial class HeroGroups(IHeroesWorld world, Action<string> log)
             _lootTo.Clear();
             _partyHeld.Clear();
             _questSyncOff.Clear();
+            _questLags.Clear();
             _switchTo.Clear();
             _leftBehind.Clear();
         }

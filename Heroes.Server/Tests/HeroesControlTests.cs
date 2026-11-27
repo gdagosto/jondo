@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Cryptography;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -30,7 +31,7 @@ public sealed class HeroesControlTests
     [Fact]
     public async Task Package_owns_the_authenticated_Heroes_HTTP_routes()
     {
-        string packages = Path.Combine(AppContext.BaseDirectory, "ServerModFixtures");
+        string packages = HeroesTestPackage.Directory;
         var settings = ServerSettings.Read("""{"ServerMods":["HEROES","heroes"]}""");
         var messages = new List<string>();
         using var enabled = ServerModLoader.LoadConfigured(packages, settings, messages.Add);
@@ -124,10 +125,10 @@ public sealed class HeroesControlTests
             Assert.Equal("""{"connected":true}""", await Ask("connect", new { token, id = hero }));
             Assert.True(Parties.IsInParty(hero));
             Assert.True(SessionRegistry.IsOnline(hero));
-            Heroes.SessionOf(hero)!.State.CellId = 123;
+            CompanionSessions.SessionOf(hero)!.State.CellId = 123;
 
             await SessionTeardown.LeaveAsync(pipe.Session, "Heroes test").WaitAsync(http.Timeout);
-            Assert.Empty(Heroes.Of(master));
+            Assert.Empty(CompanionSessions.Of(master));
             Assert.False(SessionRegistry.IsOnline(hero));
             Assert.Null(Parties.Of(hero));
             using var database = new SqliteConnection(DatabaseManager.WorldConnectionString);
@@ -144,9 +145,9 @@ public sealed class HeroesControlTests
             Assert.Equal(124L, cell.ExecuteScalar());
 
             await using var back = await ClientPipe.OpenAsync(Account, master, Map, "Maestro");
-            Heroes.Regroup(back.Session);
-            Heroes.DisconnectAll(pipe.Session);
-            Assert.Equal(hero, Assert.Single(Heroes.Of(master)).CharacterId);
+            CompanionSessions.Regroup(back.Session);
+            CompanionSessions.OnSessionLeaving(pipe.Session);
+            Assert.Equal(hero, Assert.Single(CompanionSessions.Of(master)).CharacterId);
             enabled.Dispose();
             enabled.Dispose();
             Assert.False(SessionRegistry.IsOnline(hero));
@@ -154,7 +155,7 @@ public sealed class HeroesControlTests
         }
         finally
         {
-            Heroes.DisconnectAll(master);
+            enabled.Dispose();
             DatabaseManager.DeleteCharacter(master, Account);
             DatabaseManager.DeleteCharacter(hero, Account);
             DatabaseManager.DeleteCharacter(stranger, StrangerAccount);
@@ -166,10 +167,30 @@ public sealed class HeroesControlTests
             Assert.Equal("""{"error":"ruta"}""", await Ask(route, new { token }, 404));
     }
 
-    [Fact]
-    public async Task Normal_character_selection_and_teardown_work_without_the_package()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Ordinary_sessions_work_and_only_the_active_package_exposes_routes_and_assets(bool heroes)
     {
-        Assert.False(Heroes.On);
+        string packages = HeroesTestPackage.Directory;
+        var settings = new ServerSettings { ServerMods = heroes ? ["heroes"] : [] };
+        using var mods = ServerModLoader.LoadConfigured(packages, settings, _ => { });
+        mods.StartGameplay();
+        Assert.Equal(heroes, CompanionSessions.Policy != null);
+
+        var catalog = new ClientModCatalog(Path.Combine(packages, "standalone"), settings.ClientMods, mods.ClientAssets);
+        string[] expectedAssets = heroes ? ["Heroes.dll"] : [];
+        Assert.Equal(expectedAssets, catalog.CreateManifest().Mods.Select(entry => entry.Name));
+        using var download = catalog.OpenDownload("Heroes.dll");
+        Assert.Equal(heroes, download != null);
+        if (download != null)
+            Assert.Equal(SHA256.HashData(File.ReadAllBytes(Path.Combine(packages, "heroes", "Heroes.dll"))),
+                SHA256.HashData(download));
+
+        foreach (string route in Routes)
+            Assert.Equal(heroes ? 401 : 404,
+                ControlApi.Responder("/api/heroes/" + route, "POST", "{}", "", catalog, mods.ControlRoutes)!.Value.Codigo);
+
         long character = Create(Account, "Solo");
         long other = Create(StrangerAccount, "Ajeno");
         try
@@ -185,13 +206,19 @@ public sealed class HeroesControlTests
             Assert.True(await entry.EnterWorldAsync());
             Assert.Equal(character, pipe.Session.CharacterId);
             Assert.True(SessionRegistry.IsOnline(character));
-            Assert.Empty(Heroes.Of(character));
+            Assert.Empty(CompanionSessions.Of(character));
             Assert.Null(Parties.Of(character));
 
             await SessionTeardown.LeaveAsync(pipe.Session, "Heroes absent test");
             Assert.False(pipe.Session.IsInWorld);
             Assert.False(SessionRegistry.IsOnline(character));
             Assert.Equal(character, DatabaseManager.GetCharacterById(character)?.Id);
+
+            mods.Dispose();
+            Assert.Null(CompanionSessions.Policy);
+            foreach (string route in Routes.Select(route => "/api/heroes/" + route))
+                Assert.Equal(404, ControlApi.Responder(route, "POST", "{}", "", catalog, mods.ControlRoutes)!.Value.Codigo);
+
         }
         finally
         {

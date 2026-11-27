@@ -8,7 +8,6 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading;
 using Jondo.Unity.Launcher;
-using Jondo.Unity.Launcher.Setup;
 using Xunit;
 
 namespace Jondo.Unity.Tests.Launcher;
@@ -55,7 +54,7 @@ public sealed class ClientModSyncTests : IDisposable
     {
         using var feed = new Feed(Entry("Untrusted.dll", [1]));
         using var http = new HttpClient(feed);
-        Assert.Throws<ClientModSync.ApprovalDeclinedException>(() => Prepare(http, "", (_, _, _) => false));
+        Assert.Throws<ClientModDeployment.ApprovalDeclinedException>(() => Prepare(http, "", (_, _, _) => false));
         Assert.Empty(feed.Downloads);
         Assert.False(Directory.Exists(_cache));
     }
@@ -76,31 +75,37 @@ public sealed class ClientModSyncTests : IDisposable
     }
 
     [Fact]
-    public void Manifest_launch_sets_aside_legacy_gameplay_dlls_even_when_the_manifest_is_empty()
+    public void An_empty_manifest_sets_aside_bundled_and_previously_installed_mods()
     {
-        string mods = Directory.CreateDirectory(Path.Combine(_cache, "Mods")).FullName;
-        File.WriteAllBytes(Path.Combine(mods, "Cazacabezas.dll"), [1]);
-        File.WriteAllBytes(Path.Combine(mods, "Heroes.dll"), [2]);
-        File.WriteAllBytes(Path.Combine(mods, "Custom.dll"), [3]);
-        var client = new ClientInstallation(Path.Combine(_cache, "Dofus.exe"));
+        const string bundledName = "Bundled.dll";
+        const string unrelatedName = "Custom.dll";
+        const string retiredName = "Retired.dll";
+        string bundled = Directory.CreateDirectory(Path.Combine(_cache, "bundle", "mods")).FullName;
+        File.WriteAllBytes(Path.Combine(bundled, bundledName), [1]);
+        string client = Directory.CreateDirectory(Path.Combine(_cache, "client")).FullName;
+        string mods = Directory.CreateDirectory(Path.Combine(client, "Mods")).FullName;
+        File.WriteAllBytes(Path.Combine(mods, bundledName), [2]);
+        File.WriteAllBytes(Path.Combine(mods, unrelatedName), [3]);
+        File.WriteAllBytes(Path.Combine(mods, retiredName), [4]);
+        BundledClientMods.Remember(client, retiredName);
         using var feed = new Feed();
         using var http = new HttpClient(feed);
         var plan = Prepare(http, "", (_, _, _) => true);
 
-        ClientModSync.Activate(client, plan, new ProcessStartInfo());
+        ClientModDeployment.Activate(client, Path.Combine(_cache, "bundle"), plan, new ProcessStartInfo());
 
-        Assert.False(File.Exists(Path.Combine(mods, "Cazacabezas.dll")));
-        Assert.False(File.Exists(Path.Combine(mods, "Heroes.dll")));
-        Assert.Single(Directory.GetFiles(mods, "Cazacabezas.dll.jondo-legacy-*"));
-        Assert.Single(Directory.GetFiles(mods, "Heroes.dll.jondo-legacy-*"));
-        Assert.True(File.Exists(Path.Combine(mods, "Custom.dll")));
+        Assert.False(File.Exists(Path.Combine(mods, bundledName)));
+        Assert.Single(Directory.GetFiles(mods, bundledName + ".jondo-legacy-*"));
+        Assert.False(File.Exists(Path.Combine(mods, retiredName)));
+        Assert.Single(Directory.GetFiles(mods, retiredName + ".jondo-legacy-*"));
+        Assert.True(File.Exists(Path.Combine(mods, unrelatedName)));
     }
 
-    private ClientModSync.Plan Prepare(HttpClient http, string trusted,
+    private ClientModDeployment.Plan Prepare(HttpClient http, string trusted,
         Func<string, ClientModManifest, string, bool> approve)
-        => ClientModSync.Prepare(http, Server, _cache, trusted, hasMelonLoader: true, requiresRedirectMod: false, approve);
+        => ClientModDeployment.Prepare(http, Server, Path.Combine(_cache, "bundle"), _cache, trusted, hasMelonLoader: true, requiresRedirectMod: false, approve);
 
-    private static ClientModManifest Read(ClientModSync.Plan plan)
+    private static ClientModManifest Read(ClientModDeployment.Plan plan)
         => JsonSerializer.Deserialize<ClientModManifest>(File.ReadAllBytes(plan.ManifestPath))!;
 
     private static ClientModEntry Entry(string file, byte[] bytes)

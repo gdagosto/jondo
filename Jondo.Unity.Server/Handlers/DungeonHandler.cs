@@ -150,7 +150,7 @@ namespace Jondo.Unity.Server.Handlers
             if (dungeon == null || dungeon.FirstRoom == 0) return false;
             // Before the key is spent.
             if (await Managers.Jail.KeepsInAsync(stream)) return false;
-            if (await HuntGameplay.HoldsAsync(stream, HuntActivity.Dungeon)) return false;
+            if (await PlayerPolicies.BlocksActivityAsync(stream, PlayerActivity.Dungeon)) return false;
 
             var state = SessionContext.State;
 
@@ -219,8 +219,8 @@ namespace Jondo.Unity.Server.Handlers
             if (admission.KeyedFollowers.Count > 0 && keyItem != 0)
             {
                 int guardian = state.OpenDialogueNpcId;
-                await Heroes.ShareQuestActionAsync(hero => Managers.Quests.OnKeyHandedOverAsync(hero, guardian, keyItem),
-                    participates: hero => admission.KeyedFollowers.Contains(hero.CharacterId));
+                await QuestSharing.ShareQuestActionAsync(companion => Managers.Quests.OnKeyHandedOverAsync(companion, guardian, keyItem),
+                    participates: companion => admission.KeyedFollowers.Contains(companion.CharacterId));
             }
 
             // The guardian's window is closed before anybody is moved. The client does not close it
@@ -272,7 +272,7 @@ namespace Jondo.Unity.Server.Handlers
 
             long room = ResumeRoom(dungeon, state.CharacterId);
             if (room == 0) return true;
-            if (await Jail.KeepsInAsync(stream) || await HuntGameplay.HoldsAsync(stream, HuntActivity.Dungeon))
+            if (await Jail.KeepsInAsync(stream) || await PlayerPolicies.BlocksActivityAsync(stream, PlayerActivity.Dungeon))
                 return true;
             if (dungeon.MinLevel > state.CharacterLevel)
             {
@@ -280,11 +280,13 @@ namespace Jondo.Unity.Server.Handlers
                 return true;
             }
 
-            // TeleportHandler moves following heroes with the master, so each needs this checkpoint.
-            var followers = Heroes.Gameplay?.DungeonFollowers(SessionContext.Current);
-            if (followers?.Any(hero => DungeonProgress.SavedRoom(hero.CharacterId, dungeon) != room) == true)
+            // TeleportHandler moves the admitted companions with the controller, so each needs this checkpoint.
+            var gameplay = ServerModHooks.Get<IDungeonPartyPolicy>();
+            var followers = gameplay?.DungeonFollowers(SessionContext.Current);
+            if (followers != null && !gameplay!.CanResumeDungeon(followers, room,
+                characterId => DungeonProgress.SavedRoom(characterId, dungeon)))
             {
-                await TellAsync(stream, CommandTexts.Get("dungeon.heroes_resume_room"));
+                await TellAsync(stream, CommandTexts.Get("dungeon.party_resume_room"));
                 return true;
             }
 
@@ -361,7 +363,7 @@ namespace Jondo.Unity.Server.Handlers
         /// consommer un Multygely pour être téléporté dans le donjon» and «vous serez directement
         /// téléporté dans la salle 1 du donjon» (Dofus pour les noobs, «Gelaxième Dimension»). Into
         /// the first room on the item's own cell, the item spent there, and a new run started as the
-        /// guardian's door starts one: the heroes along on a key each, the lobby's and the colours'
+        /// guardian's door starts one: the companions along on a key each, the lobby's and the colours'
         /// wins forgotten. False, nothing spent, when he cannot go in.
         /// </summary>
         internal static async Task<bool> EnterByItemAsync(NetworkStream stream, DungeonManager.Dungeon dungeon,
@@ -369,7 +371,7 @@ namespace Jondo.Unity.Server.Handlers
         {
             var state = SessionContext.State;
             if (dungeon.FirstRoom == 0) return false;
-            if (await HuntGameplay.HoldsAsync(stream, HuntActivity.Dungeon)) return false;
+            if (await PlayerPolicies.BlocksActivityAsync(stream, PlayerActivity.Dungeon)) return false;
             if (dungeon.MinLevel > 0 && state.CharacterLevel < dungeon.MinLevel)
             {
                 Console.WriteLine($"[Dungeon] {dungeon.Name}: needs level {dungeon.MinLevel} and has {state.CharacterLevel}.");

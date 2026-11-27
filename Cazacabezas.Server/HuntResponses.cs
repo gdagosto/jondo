@@ -3,9 +3,9 @@ using Jondo.Unity.ServerMods;
 
 namespace Cazacabezas.Server;
 
-internal sealed class HuntResponses(IHuntWorld world, HeadHunts hunts)
+internal sealed class HuntResponses(IAlignmentWorld world, HeadHunts hunts)
 {
-    public string StatusJson(SelectedHunter me)
+    public string StatusJson(SelectedCharacter me)
     {
         long id = me.Id;
         int level = me.Level;
@@ -62,7 +62,7 @@ internal sealed class HuntResponses(IHuntWorld world, HeadHunts hunts)
         });
     }
 
-    public string BoardJson(SelectedHunter me)
+    public string BoardJson(SelectedCharacter me)
     {
         var board = hunts.CandidatesFor(me.Id, me.Level);
         return JsonSerializer.Serialize(new

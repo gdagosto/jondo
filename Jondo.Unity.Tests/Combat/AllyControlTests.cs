@@ -7,32 +7,32 @@ using Xunit;
 namespace Jondo.Unity.Tests.Combat
 {
     /// <summary>
-    /// The hero mode's probe: a character fighter another one plays by hand, as a summon is
+    /// A character ally controlled by another player, as a summon is
     /// played -- his turn and his bar go to his player -- but with a character's bar.
     /// </summary>
-    public class HeroProbeTests
+    public class AllyControlTests
     {
         private const long Master = 53000000024;
 
-        private static Fighter Hero()
+        private static Fighter Ally()
         {
-            var hero = new Fighter { Id = 7, Breed = 8, Level = 200, MaxMP = 3, IsBot = true };
-            hero.SpellIds.AddRange(new[] { 12736, 13434 });
-            hero.SpellGrades[12736] = 4;
-            return hero;
+            var ally = new Fighter { Id = 7, Breed = 8, Level = 200, MaxMP = 3, IsBot = true };
+            ally.SpellIds.AddRange(new[] { 12736, 13434 });
+            ally.SpellGrades[12736] = 4;
+            return ally;
         }
 
         [Fact]
-        public void A_hero_is_his_players_to_play_with_his_class_spells()
+        public void A_controlled_ally_uses_its_class_spells()
         {
-            var hero = Hero();
-            FightHandler.AssignAllyController(hero, Master);
+            var ally = Ally();
+            FightHandler.AssignAllyController(ally, Master);
 
-            Assert.True(hero.IsPlayedAlly);
-            Assert.True(hero.ControlledBy(Master));
-            Assert.False(hero.ControlledBy(Master + 1));
-            Assert.False(hero.PlaysOnItsOwn);
-            Assert.Equal(new[] { (12736, 4), (13434, 1) }, hero.HechizosDeInvocado);
+            Assert.True(ally.IsPlayedAlly);
+            Assert.True(ally.ControlledBy(Master));
+            Assert.False(ally.ControlledBy(Master + 1));
+            Assert.False(ally.PlaysOnItsOwn);
+            Assert.Equal(new[] { (12736, 4), (13434, 1) }, ally.HechizosDeInvocado);
         }
 
         /// <summary>
@@ -55,7 +55,7 @@ namespace Jondo.Unity.Tests.Combat
         /// with his player in f4, where a summon's bar carries its owner.
         /// </summary>
         [Fact]
-        public void A_heros_bar_is_a_characters_with_his_player_as_controller()
+        public void A_controlled_ally_keeps_its_own_spell_bar()
         {
             byte[] jyy = FightProtocol.BuildSpellBar(7, new[] { (12736, 4) },
                 new[] { (0, FightProtocol.HechizoCuerpoACuerpo), (1, 12736) }, conArma: true, controllerId: Master);

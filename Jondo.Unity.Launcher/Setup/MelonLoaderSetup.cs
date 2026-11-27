@@ -63,15 +63,16 @@ namespace Jondo.Unity.Launcher.Setup
             string mods = Path.Combine(clientRoot, "Mods");
             Directory.CreateDirectory(mods);
             int copied = 0;
-            foreach (string mod in LauncherService.ShippedMods)
+            foreach ((string mod, string shipped) in BundledClientMods.Discover(emulatorRoot))
             {
-                string shipped = LauncherService.ShippedModPath(emulatorRoot, mod);
-                if (!File.Exists(shipped)) continue;
-                string installed = Path.Combine(mods, mod + ".dll");
-                if (File.Exists(installed) && LauncherService.SameContent(installed, shipped)) continue;
-                File.Copy(shipped, installed + ".jondo-new", overwrite: true);
-                ArchiveExtractor.ReplaceFile(installed + ".jondo-new", installed);
-                copied++;
+                string installed = Path.Combine(mods, mod);
+                if (!File.Exists(installed) || !BundledClientMods.SameContent(installed, shipped))
+                {
+                    File.Copy(shipped, installed + ".jondo-new", overwrite: true);
+                    ArchiveExtractor.ReplaceFile(installed + ".jondo-new", installed);
+                    copied++;
+                }
+                BundledClientMods.Remember(clientRoot, mod);
             }
             return copied;
         }

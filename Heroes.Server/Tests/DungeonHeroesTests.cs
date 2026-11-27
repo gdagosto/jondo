@@ -3,7 +3,6 @@ using Jondo.Unity.Protocol;
 using Jondo.Unity.Server;
 using Jondo.Unity.Server.Handlers;
 using Jondo.Unity.Server.Managers;
-using Jondo.Unity.Server.Mods;
 using Jondo.Unity.Server.Network;
 using Jondo.Unity.ServerMods;
 using Jondo.Unity.Tests.Economy;
@@ -15,19 +14,17 @@ namespace Jondo.Unity.Tests.World
     [Collection("Heroes gameplay")]
     public sealed class DungeonHeroesTests : IDisposable
     {
-        private readonly ServerModLoader _heroes = ServerModLoader.Load(
-            Path.Combine(AppContext.BaseDirectory, "ServerModFixtures"), ["heroes"], Console.WriteLine);
+        private readonly HeroesTestPackage _package = new();
 
-        public void Dispose() => _heroes.Dispose();
+        public void Dispose() => _package.Dispose();
 
         private static DungeonFollowerOptions M(long id, int keys, bool keyring = false, bool wantsKey = false)
             => new(id, keys, keyring, wantsKey);
 
-        private static Dictionary<long, long>? Plan(DungeonFollowerOptions master,
+        private Dictionary<long, long>? Plan(DungeonFollowerOptions master,
             IReadOnlyList<DungeonFollowerOptions> followers, out int missing)
         {
-            var hook = Assert.IsAssignableFrom<IHeroesDungeonAdmission>(Heroes.Gameplay);
-            var plan = hook.PlanDungeonAdmission(new(master.CharacterId, master.Keys, true, followers));
+            var plan = _package.Groups.PlanDungeonAdmission(new(master.CharacterId, master.Keys, true, followers));
             missing = plan.MissingKeys;
             if (missing == 0) return plan.Followers.ToDictionary(way => way.CharacterId, way => way.PayerId);
             Assert.Empty(plan.Followers);
@@ -125,9 +122,9 @@ namespace Jondo.Unity.Tests.World
                 using var context = SessionContext.Push(pipe.Session);
                 Equipment.LoadFrom(master);
                 foreach (long hero in new[] { payer, guest, ring, fighting })
-                    Assert.Equal("ok", Heroes.Connect(pipe.Session, hero));
-                Heroes.SessionOf(fighting)!.State.IsInFight = true;
-                var members = new[] { pipe.Session, Heroes.SessionOf(payer)!, Heroes.SessionOf(guest)!, Heroes.SessionOf(ring)! };
+                    Assert.Equal("ok", _package.Groups.Connect(pipe.Session, hero));
+                CompanionSessions.SessionOf(fighting)!.State.IsInFight = true;
+                var members = new[] { pipe.Session, CompanionSessions.SessionOf(payer)!, CompanionSessions.SessionOf(guest)!, CompanionSessions.SessionOf(ring)! };
 
                 void AssertRejected()
                 {
@@ -144,21 +141,21 @@ namespace Jondo.Unity.Tests.World
                 // The planner can see a key in the follower's live bag. If it disappeared from
                 // storage, the master's earlier debit must roll back with the failed final debit.
                 long payerKey = DatabaseManager.NextItemUid();
-                using (SessionContext.Push(Heroes.SessionOf(payer)!))
+                using (SessionContext.Push(CompanionSessions.SessionOf(payer)!))
                     Equipment.Add(payerKey, key, 1, Equipment.Bag, null);
                 Assert.False(await DungeonHandler.AtTheDoorAsync(pipe.ToClient, entrance));
                 AssertRejected();
-                using (SessionContext.Push(Heroes.SessionOf(payer)!))
+                using (SessionContext.Push(CompanionSessions.SessionOf(payer)!))
                     Assert.Equal(1, Equipment.ByUid(payerKey)!.Quantity);
 
                 Assert.True(DatabaseManager.InsertCharacterItem(payerKey, payer, key, 1, Equipment.Bag, null));
                 Assert.True(await DungeonHandler.AtTheDoorAsync(pipe.ToClient, entrance));
                 Assert.All(members, session => Assert.Equal(room, session.MapId));
                 Assert.All(members, session => Assert.Equal(room, DungeonProgress.SavedRoom(session.CharacterId, dungeon)));
-                Assert.Equal(entrance, Heroes.SessionOf(fighting)!.MapId);
+                Assert.Equal(entrance, CompanionSessions.SessionOf(fighting)!.MapId);
                 Assert.Equal(0, DungeonProgress.SavedRoom(fighting, dungeon));
                 Assert.Null(Equipment.ByUid(masterKey));
-                using (SessionContext.Push(Heroes.SessionOf(payer)!))
+                using (SessionContext.Push(CompanionSessions.SessionOf(payer)!))
                     Assert.Null(Equipment.ByUid(payerKey));
                 Assert.DoesNotContain(DatabaseManager.LoadInventory(master), item => item.Uid == masterKey);
                 Assert.DoesNotContain(DatabaseManager.LoadInventory(payer), item => item.Uid == payerKey);
@@ -167,8 +164,8 @@ namespace Jondo.Unity.Tests.World
             }
             finally
             {
-                if (Heroes.SessionOf(fighting) is { } follower) follower.State.IsInFight = false;
-                Heroes.DisconnectAll(master);
+                if (CompanionSessions.SessionOf(fighting) is { } follower) follower.State.IsInFight = false;
+                _package.Groups.DisconnectAll(master);
                 MapManager.Maps.Remove(room);
                 dungeons.Remove(dungeonId);
             }

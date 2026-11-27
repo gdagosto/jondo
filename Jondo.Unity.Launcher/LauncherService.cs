@@ -410,7 +410,6 @@ namespace Jondo.Unity.Launcher
                         startInfo.Environment["JONDO_ACCOUNT_ROLE"] = accountRole.ToString(System.Globalization.CultureInfo.InvariantCulture);
                         if (Roles.AlMenos(accountRole, Roles.Administrador))
                             startInfo.Environment["JONDO_CONTROL_TOKEN"] = token ?? "";
-                        // Cazacabezas can only query the account's own hunter through this session.
                         startInfo.Environment["JONDO_PLAYER_TOKEN"] = token ?? "";
                     }
 
@@ -442,7 +441,7 @@ namespace Jondo.Unity.Launcher
                     throw;
                 }
             }
-            catch (ClientModSync.ApprovalDeclinedException)
+            catch (ClientModDeployment.ApprovalDeclinedException)
             {
                 return new Result { ModApprovalDeclined = true };
             }
@@ -521,74 +520,21 @@ namespace Jondo.Unity.Launcher
             return start;
         }
 
-        /// <summary>The mods the emulator ships, including the pre-manifest fallback.</summary>
-        internal static readonly string[] ShippedMods = { "JondoFix", "Cazacabezas", "Heroes" };
-
-        internal static string ShippedModPath(string emulatorRoot, string mod)
-        {
-            string packed = Path.Combine(emulatorRoot, "mods", mod + ".dll");
-            return File.Exists(packed) ? packed : Path.Combine(emulatorRoot, mod, mod + ".dll");
-        }
-
         /// <summary>
         /// The emulator's mods into the client's Mods, each when it differs from the one there.
         /// </summary>
-        /// <remarks>
-        /// What the mods change in the client -- the Koliseo window with the JondoBots' card, the
-        /// head hunters' window, among the rest -- comes with the emulator, not with a new client:
-        /// whoever has a client with MelonLoader gets it at the next launch. A client without
-        /// MelonLoader is left alone. A client already open holds the file: it is set aside as
-        /// «.old» -- renaming a loaded file is allowed -- and the new one goes in its place.
-        /// </remarks>
-        internal static void InstallMod(string clientPath)
+        /// <remarks>A loaded DLL can be set aside as .old before replacing it.</remarks>
+        internal static void InstallMod(string clientPath, string? emulatorRoot = null)
         {
             string clientDir = Path.GetDirectoryName(clientPath) ?? "";
             if (!Directory.Exists(Path.Combine(clientDir, "MelonLoader"))) return;
-            string mods = Path.Combine(clientDir, "Mods");
-            foreach (string mod in ShippedMods)
+            foreach (var update in BundledClientMods.Install(emulatorRoot ?? Paths.Root, clientDir))
             {
-                try
-                {
-                    string shipped = ShippedModPath(Paths.Root, mod);
-                    if (!File.Exists(shipped)) continue;
-
-                    string installed = Path.Combine(mods, mod + ".dll");
-                    string aside = installed + ".old";
-                    // The one set aside last time, by a client that held it then: gone once nobody does.
-                    try { if (File.Exists(aside)) File.Delete(aside); } catch (IOException) { } catch (UnauthorizedAccessException) { }
-                    if (File.Exists(installed) && SameContent(installed, shipped)) continue;
-
-                    Directory.CreateDirectory(mods);
-                    try
-                    {
-                        File.Copy(shipped, installed, overwrite: true);
-                    }
-                    catch (IOException) when (File.Exists(installed) && !File.Exists(aside))
-                    {
-                        // A client open holds it: Windows lets a loaded file be renamed, not
-                        // overwritten. Set aside -- MelonLoader loads no «.old» -- the new one goes
-                        // in its place, for this launch's client and every one after.
-                        File.Move(installed, aside);
-                        File.Copy(shipped, installed, overwrite: true);
-                    }
-                    Console.WriteLine($"[Launcher] {mod} updated in {mods}.");
-                }
-                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
-                {
-                    Console.WriteLine($"[Launcher] {mod} could not be updated now (is a client open?): {ex.Message}");
-                }
+                if (update.Error != null)
+                    Console.WriteLine($"[Launcher] {update.Name} could not be updated now: {update.Error}");
+                else
+                    Console.WriteLine($"[Launcher] {update.Name} updated in {Path.Combine(clientDir, "Mods")}.");
             }
-        }
-
-        internal static bool SameContent(string a, string b)
-        {
-            var infoA = new FileInfo(a);
-            var infoB = new FileInfo(b);
-            if (infoA.Length != infoB.Length) return false;
-            using var sha = System.Security.Cryptography.SHA256.Create();
-            using var streamA = File.OpenRead(a);
-            using var streamB = File.OpenRead(b);
-            return sha.ComputeHash(streamA).AsSpan().SequenceEqual(sha.ComputeHash(streamB));
         }
 
         /// <summary>

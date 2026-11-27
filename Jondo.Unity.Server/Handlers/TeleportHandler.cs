@@ -159,7 +159,7 @@ namespace Jondo.Unity.Server.Handlers
             => ToMapAsync(session, mapId, targetCell, admitted: null);
 
         internal static async Task<int> ToMapAsync(GameSession session, long mapId, int targetCell,
-            IReadOnlyList<Jondo.Unity.ServerMods.IHeroMember>? admitted)
+            IReadOnlyList<Jondo.Unity.ServerMods.ICompanion>? admitted)
         {
             if (!await CanTeleportAsync(session, mapId)) return -1;
             return await MoveToMapAsync(session, mapId, targetCell, admitted);
@@ -190,7 +190,7 @@ namespace Jondo.Unity.Server.Handlers
         }
 
         internal static async Task<int> MoveToMapAsync(GameSession session, long mapId, int targetCell,
-            IReadOnlyList<Jondo.Unity.ServerMods.IHeroMember>? admitted = null)
+            IReadOnlyList<Jondo.Unity.ServerMods.ICompanion>? admitted = null)
         {
             var previousMap = session.Map;
             session.State.MapId = mapId;

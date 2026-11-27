@@ -4,25 +4,28 @@ using Jondo.Unity.ServerMods;
 
 namespace Heroes.Server;
 
-public sealed class HeroesMod : IServerMod
+public sealed partial class HeroesMod : IServerMod
 {
-    private HeroGroups? _groups;
+    internal HeroGroups? Groups { get; private set; }
 
     public void Initialize(IServerModHost host)
     {
-        var control = (IHeroesControl)host;
-        var gameplay = (IHeroesModHost)host;
-        var world = gameplay.HeroesWorld;
-        var groups = _groups = new HeroGroups(world, host.Log);
-        gameplay.RegisterHeroesGameplay(groups);
-        ((IFightModHost)host).RegisterFightParticipantPolicy(groups);
+        var world = host.GetService<ICharacterWorld>();
+        var settings = host.Settings.Deserialize<HeroesSettings>() ?? new();
+        var companions = host.GetService<ICompanionWorld>();
+        var groups = Groups = new HeroGroups(companions, host.GetService<IPartyWorld>(),
+            host.GetService<IMovementWorld>(), host.GetService<IQuestWorld>(), settings, host.Log);
+        host.RegisterHook<ICompanionSessionPolicy>(groups);
+        host.RegisterHook<IPartyMembershipPolicy>(groups);
+        host.RegisterHook<ITradeRoutingPolicy>(groups);
+        host.RegisterHook<ICompanionMovement>(groups);
+        host.RegisterHook<IQuestSharingPolicy>(groups);
+        host.RegisterHook<IDungeonPartyPolicy>(groups);
+        host.RegisterHook<IFightParticipantPolicy>(groups);
 
-        Register("list", HeroesControlOperation.List);
-        Register("portrait", HeroesControlOperation.Portrait);
-        Register("quests", HeroesControlOperation.Quests);
         host.RegisterAuthenticatedControlRoute(Path("autopass"), request =>
         {
-            var master = world.FindMaster(request.AccountId);
+            var master = world.FindSelectedSession(request.AccountId);
             if (master == null) return Error("world");
             bool on = Number(request.Body, "on") != 0;
             return groups.SetAutoPass(master.CharacterId, Number(request.Body, "id"), on)
@@ -30,16 +33,13 @@ public sealed class HeroesMod : IServerMod
         });
         host.RegisterAuthenticatedControlRoute(Path("loot"), request =>
         {
-            var master = world.FindMaster(request.AccountId);
+            var master = world.FindSelectedSession(request.AccountId);
             if (master == null) return Error("world");
             long id = master.CharacterId;
             return groups.SetLootTo(id, Number(request.Body, "id"))
                 ? Reply(200, new { lootTo = groups.LootTo(id) }) : Error("none");
         });
-        Register("sheet", HeroesControlOperation.Sheet);
-        Register("create", HeroesControlOperation.Create);
-        Register("name", HeroesControlOperation.Name);
-        Register("preview", HeroesControlOperation.Preview);
+        RegisterCharacterRoutes(host, world, companions, groups);
         RegisterLifecycle("connect", (master, id, _) =>
         {
             string result = groups.Connect(master, id);
@@ -55,14 +55,11 @@ public sealed class HeroesMod : IServerMod
             return result == "ok" ? Reply(200, new { switched = true }) : Error(result);
         }, takeTurn: false);
 
-        void Register(string name, HeroesControlOperation operation)
-            => host.RegisterAuthenticatedControlRoute(Path(name), request => control.Handle(operation, request));
-
-        void RegisterLifecycle(string name, Func<IHeroSession, long, bool, ServerModControlResponse> handle,
+        void RegisterLifecycle(string name, Func<ICharacterSession, long, bool, ServerModControlResponse> handle,
             bool takeTurn = true)
             => host.RegisterAuthenticatedControlRoute(Path(name), request =>
             {
-                var master = world.FindMaster(request.AccountId);
+                var master = world.FindSelectedSession(request.AccountId);
                 if (master == null) return Error("world");
                 long id = Number(request.Body, "id");
                 bool later = name == "switch" && Number(request.Body, "later") != 0;
@@ -71,7 +68,7 @@ public sealed class HeroesMod : IServerMod
             });
     }
 
-    public void Shutdown() => _groups?.Stop();
+    public void Shutdown() => Groups?.Stop();
 
     private static string Path(string route) => Contract.Prefijo + "heroes/" + route;
     private static ServerModControlResponse Reply(int status, object data) => new(status, JsonSerializer.Serialize(data));

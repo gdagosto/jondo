@@ -75,15 +75,10 @@ internal static class ServerSettingsTexts
         ["BotsOnHint"] = ("Bots Jondobot-Xx de clase aleatoria, cada uno con su conexión: caminan, combaten monstruos, recolectan, van al Koliseo y aceptan todos los desafíos.", "Jondobot-Xx bots of a random class, each over its own connection: they walk, fight monsters, gather, go to the Kolossium and accept every duel.", "Des bots Jondobot-Xx de classe aléatoire, chacun avec sa propre connexion : ils marchent, combattent des monstres, récoltent, vont au Kolizéum et acceptent tous les défis."),
         ["BotsMax"] = ("Máximo a la vez", "Most at once", "Maximum en même temps"),
         ["BotsMaxHint"] = ("Cuántos están conectados varía por debajo de este número, como en un servidor real.", "How many are connected varies below this number, as on a real server.", "Le nombre de connectés varie sous ce nombre, comme sur un vrai serveur."),
-        ["HuntersOn"] = ("Cazacabezas", "Head hunters", "Chasseurs de têtes"),
-        ["HuntersOnHint"] = ("Órdenes de caza contra la otra ciudad, pagadas en chapas. Con el mod Cazacabezas (F7).", "Hunt orders on the other city, paid in Strokens. Cazacabezas mod: F7.", "Des ordres de traque contre l'autre cité, payés en pévétons. Avec le mod Cazacabezas (F7)."),
-        ["HuntMinutes"] = ("Minutos de una caza", "Minutes of a hunt", "Minutes d'une traque"),
-        ["RestMinutes"] = ("Minutos de descanso entre cazas", "Minutes of respite between hunts", "Minutes de répit entre traques"),
-        ["HeroMode"] = ("Modo Héroe", "Hero mode", "Mode Héros"),
-        ["HeroModeHint"] = ("Los otros personajes de la cuenta, conectados junto al tuyo: combaten a tu lado y los juegas tú en sus turnos. Con el mod Héroes (Ctrl+Tab).",
-                            "The account's other characters, connected beside yours: they fight at your side and you play them in their turns. With the Heroes mod (Ctrl+Tab).",
-                            "Les autres personnages du compte, connectés à côté du vôtre : ils combattent à vos côtés et vous les jouez à leur tour. Avec le mod Héros (Ctrl+Tab)."),
-        ["HeroesMax"] = ("Héroes a la vez", "Heroes at once", "Héros en même temps"),
+        ["ServerMods"] = ("MODS DEL SERVIDOR", "SERVER MODS", "MODS DU SERVEUR"),
+        ["NoServerMods"] = ("Coloca las DLL o los paquetes de mods en la carpeta server-mods.",
+                            "Place server mod DLLs or unpacked packages in the server-mods folder.",
+                            "Placez les DLL ou les paquets de mods décompressés dans le dossier server-mods."),
         ["Close"] = ("CERRAR", "CLOSE", "FERMER"),
         ["Cancel"] = ("CANCELAR", "CANCEL", "ANNULER"),
         ["Back"] = ("VOLVER", "BACK", "RETOUR"),
@@ -165,11 +160,9 @@ internal static class ServerSettingsTexts
 
         ["World"] = ("MUNDO", "WORLD", "MONDE"),
         ["CharacterSlots"] = ("Personajes por cuenta y servidor", "Characters per account and server", "Personnages par compte et serveur"),
-        ["CharacterSlotsHint"] = ("Ocho deja un grupo de héroes entero con su líder; el servidor oficial tiene cinco.", "Eight leaves a whole group of heroes with its leader; the official server has five.", "Huit laisse un groupe de héros entier avec son chef ; le serveur officiel en a cinq."),
+        ["CharacterSlotsHint"] = ("El servidor oficial tiene cinco.", "The official server allows five.", "Le serveur officiel en autorise cinq."),
         ["RequireZaap"] = ("Descubrir los zaaps", "Discover the zaaps", "Découvrir les zaaps"),
         ["RequireZaapHint"] = ("Hay que visitar un zaap antes de viajar a él.", "A zaap must be visited before travelling to it.", "Il faut visiter un zaap avant d'y voyager."),
-        ["HeroReload"] = ("Recargar el mapa al cambiar de héroe", "Reload the map on hero switch", "Recharger la carte au changement de héros"),
-        ["HeroReloadHint"] = ("Apagado, solo se reenvían los actores del mapa: más rápido.", "Off, only the map's actors are sent again: quicker.", "Désactivé, seuls les acteurs de la carte sont renvoyés : plus rapide."),
     };
 
     /// <summary>Whether the table has that key (the event names, keyed by event).</summary>

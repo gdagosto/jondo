@@ -4,29 +4,29 @@ namespace Heroes.Server;
 
 internal sealed partial class HeroGroups
 {
-    public async Task<string> SwitchAsync(IHeroSession master, long heroId)
+    public async Task<string> SwitchAsync(ICharacterSession master, long heroId)
     {
         using var turn = await master.EnterTurnAsync();
         long formerId = master.CharacterId;
-        if (!master.IsInWorld || Find(heroId) is not { } hero || hero.MasterId != formerId)
+        if (!master.IsInWorld || Find(heroId) is not { } hero || hero.ControllerId != formerId)
             return "hero";
         if (master.IsInFight || hero.Session.IsInFight) return "fight";
-        if (!world.OwnsCharacter(master, heroId)) return "account";
+        if (!companions.OwnsCharacter(master, heroId)) return "account";
 
         var group = Of(formerId);
         long lootTo = LootTo(formerId);
         var position = master.Position;
-        bool reload = world.ReloadMapOnSwitch;
-        long[] held = world.IsInParty(formerId)
+        bool reload = settings.ReloadMapOnSwitch;
+        long[] held = parties.IsInParty(formerId)
             ? group.Select(h => h.CharacterId).Prepend(formerId).ToArray()
             : [];
         lock (_gate) _partyHeld.UnionWith(held);
         int place = -1;
         try
         {
-            await world.RemoveMasterForSwitchAsync(master, reload);
+            await companions.SaveAndRemoveActorAsync(master, reload);
             place = HandOver(formerId, heroId);
-            if (place < 0 || !await world.SelectMasterAsync(master, heroId, position, reload))
+            if (place < 0 || !await companions.SwitchCharacterAsync(master, heroId, position, reload))
             {
                 if (place >= 0 && master.CharacterId == formerId)
                 {
@@ -39,7 +39,7 @@ internal sealed partial class HeroGroups
                     }
                     if (lootTo != 0) SetLootTo(formerId, lootTo);
                 }
-                await world.DrawFollowerAsync(master, master);
+                await movement.DrawFollowerAsync(master, master);
                 return "hero";
             }
 
@@ -57,7 +57,7 @@ internal sealed partial class HeroGroups
                 }
             }
             finally { lock (_gate) _partyHeld.ExceptWith(held); }
-            await world.RefreshPartyAfterSwitchAsync(master, formerId, held);
+            await RefreshPartyAfterSwitchAsync(master, formerId, held);
         }
     }
 
@@ -68,7 +68,7 @@ internal sealed partial class HeroGroups
         lock (_gate)
         {
             if (_transitioning.Contains(heroId) || !_byHero.TryGetValue(heroId, out var hero)
-                || hero.MasterId != masterId) return -1;
+                || hero.ControllerId != masterId) return -1;
             taken = hero;
             var list = _byMaster[masterId];
             int at = list.IndexOf(taken);
@@ -87,7 +87,7 @@ internal sealed partial class HeroGroups
     private void Reassign(long from, long to, List<Member> members)
     {
         _byMaster.Remove(from);
-        foreach (var other in members) other.MasterId = to;
+        foreach (var other in members) other.ControllerId = to;
         if (members.Count > 0) _byMaster[to] = members;
     }
 
@@ -95,37 +95,96 @@ internal sealed partial class HeroGroups
     {
         lock (_gate)
         {
-            if (!_byHero.TryGetValue(heroId, out var hero) || hero.MasterId != masterId) return;
+            if (!_byHero.TryGetValue(heroId, out var hero) || hero.ControllerId != masterId) return;
             var list = _byMaster[masterId];
             list.Remove(hero);
             list.Insert(Math.Clamp(place, 0, list.Count), hero);
         }
     }
 
+    public long PartyInviteRecipient(string characterName) => Named(characterName)?.ControllerId ?? 0;
+
+    public bool OwnsParty(long characterId, IReadOnlyList<long> members)
+        => members.All(member => member == characterId || Find(member)?.ControllerId == characterId);
+
+    public bool ReleaseKickedFollower(long leaderId, long memberId)
+    {
+        if (Find(memberId)?.ControllerId != leaderId) return false;
+        if (Disconnect(leaderId, memberId))
+            log($"{leaderId} lets {memberId} go from the party.");
+        return true;
+    }
+
+    public bool CanLeadParty(long characterId) => Find(characterId) == null;
+    public long ChoosePartyLeader(IReadOnlyList<long> members) => members.FirstOrDefault(CanLeadParty, members[0]);
+    public bool HasPartyLeader(IReadOnlyList<long> members) => members.Any(CanLeadParty);
+
+    public (long Target, ICharacterSession? AutoAcceptingSession) ResolveTradeTarget(long requester, long target)
+    {
+        var hero = Find(target);
+        if (hero == null) return (target, null);
+        if (hero.ControllerId == requester) return (target, hero.Session);
+        log($"{requester} asks {target} to trade. The request goes to {hero.ControllerId}.");
+        return (hero.ControllerId, null);
+    }
+
+    private async Task RefreshPartyAfterSwitchAsync(ICharacterSession session, long formerId, IReadOnlyCollection<long> held)
+    {
+        long current = session.CharacterId;
+        foreach (long id in held)
+            if (id != current && Find(id) == null && parties.PartyOf(id) != null)
+                await parties.RemovePartyMemberAsync(id);
+
+        if (parties.JoinedParty(current) is { } party)
+        {
+            if (party.Leader == formerId || !CanLeadParty(party.Leader))
+                await parties.PromotePartyLeaderAsync(session, party.Id);
+            await parties.SendPartyAsync(session, party.Id);
+        }
+        await JoinPartyAsync(session);
+    }
+
+    public IEnumerable<ICompanion> VisibleFollowers(ICharacterSession master, long mapId)
+    {
+        if (master.CharacterId <= 0 || master.IsInFight) yield break;
+        foreach (var hero in Of(master.CharacterId))
+            if (!hero.Session.IsInFight && hero.Session.Position.MapId == mapId)
+                yield return hero;
+    }
+
     public async Task LeavePartyAsync(int partyId, long masterId)
     {
         foreach (var hero in Of(masterId))
-            if (world.PartyOf(hero.CharacterId) == partyId)
-                await world.RemovePartyMemberAsync(hero.CharacterId);
+            if (parties.PartyOf(hero.CharacterId) == partyId)
+                await parties.RemovePartyMemberAsync(hero.CharacterId);
     }
 
-    public async Task JoinPartyAsync(IHeroSession master)
+    public async Task JoinPartyAsync(ICharacterSession master)
     {
         foreach (var hero in Of(master.CharacterId))
         {
-            int? party = world.PartyOf(hero.CharacterId);
-            if (party == null || party != world.PartyOf(master.CharacterId))
+            int? party = parties.PartyOf(hero.CharacterId);
+            if (party == null || party != parties.PartyOf(master.CharacterId))
             {
-                if (party != null) await world.RemovePartyMemberAsync(hero.CharacterId);
-                await world.JoinMasterPartyAsync(master, hero.CharacterId);
+                if (party != null) await parties.RemovePartyMemberAsync(hero.CharacterId);
+                await AddFollowerToPartyAsync(master, hero.CharacterId);
             }
         }
     }
 
-    private async Task ArriveAsync(IHeroSession master, IHeroMember hero)
+    private Task AddFollowerToPartyAsync(ICharacterSession master, long followerId)
+    {
+        if (parties.PartyOf(followerId) != null) return Task.CompletedTask;
+        var party = parties.JoinedParty(master.CharacterId);
+        // Followers wait while the master has an unanswered invitation.
+        return party == null && parties.PartyOf(master.CharacterId) != null
+            ? Task.CompletedTask : parties.AddPartyMemberAsync(master, followerId, party?.Id);
+    }
+
+    private async Task ArriveAsync(ICharacterSession master, ICompanion hero)
     {
         var position = master.Position;
-        var cells = world.WalkableCells(position.MapId);
+        var cells = movement.WalkableCells(position.MapId);
         if (cells != null)
         {
             var taken = Of(master.CharacterId)
@@ -135,30 +194,30 @@ internal sealed partial class HeroGroups
             position = position with { CellId = NearestFree(position.CellId, cells, taken) };
         }
         hero.Session.Position = position;
-        world.DiscoverZaap(hero.CharacterId, position.MapId);
-        await world.DrawFollowerAsync(master, hero.Session);
+        movement.DiscoverZaap(hero.CharacterId, position.MapId);
+        await movement.DrawFollowerAsync(master, hero.Session);
     }
 
-    public Task MasterMovedAsync(IHeroSession master, long mapLeft)
+    public Task MasterMovedAsync(ICharacterSession master, long mapLeft)
         => MoveFollowersAsync(master, mapLeft, Of(master.CharacterId).Where(hero => !hero.Session.IsInFight));
 
-    private async Task MoveFollowersAsync(IHeroSession master, long mapLeft, IEnumerable<IHeroMember> followers)
+    private async Task MoveFollowersAsync(ICharacterSession master, long mapLeft, IEnumerable<ICompanion> followers)
     {
         foreach (var hero in followers)
         {
             if (mapLeft > 0 && mapLeft != master.Position.MapId)
-                await world.RemoveActorAsync(mapLeft, hero.CharacterId);
+                await movement.RemoveActorAsync(mapLeft, hero.CharacterId);
             await ArriveAsync(master, hero);
-            try { await world.UpdateAchievementsAsync(master, hero.Session); }
+            try { await movement.UpdateAchievementsAsync(master, hero.Session); }
             catch (Exception ex) { log($"{hero.CharacterId}'s achievements could not be updated: {ex.Message}"); }
         }
     }
 
-    public async Task MasterWalkedAsync(IHeroSession master, IReadOnlyList<int> cells)
+    public async Task MasterWalkedAsync(ICharacterSession master, IReadOnlyList<int> cells)
     {
         if (cells.Count == 0) return;
         var position = master.Position;
-        var cellsOfMap = world.WalkableCells(position.MapId);
+        var cellsOfMap = movement.WalkableCells(position.MapId);
         if (cellsOfMap == null) return;
         var walkable = new HashSet<int>(cellsOfMap);
         int end = cells[^1];
@@ -170,10 +229,10 @@ internal sealed partial class HeroGroups
             int target = NearestFree(end, walkable, taken);
             taken.Add(target);
             if (target == current.CellId) continue;
-            var path = world.FindPath(current.CellId, target, walkable);
+            var path = movement.FindPath(current.CellId, target, walkable);
             if (path.Count < 2) path = [current.CellId, target];
             hero.Session.Position = position with { CellId = target };
-            try { await world.WalkFollowerAsync(master, hero.CharacterId, path); }
+            try { await movement.WalkFollowerAsync(master, hero.CharacterId, path); }
             catch (Exception ex) { log($"{hero.CharacterId} could not follow: {ex.Message}"); }
         }
     }
@@ -184,7 +243,7 @@ internal sealed partial class HeroGroups
         foreach (int candidate in walkable)
         {
             if (taken.Contains(candidate)) continue;
-            int distance = world.CellDistance(cell, candidate);
+            int distance = movement.CellDistance(cell, candidate);
             if (distance < 1 || distance >= bestDistance) continue;
             best = candidate;
             bestDistance = distance;

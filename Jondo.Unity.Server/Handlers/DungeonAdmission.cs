@@ -1,3 +1,4 @@
+using Jondo.Unity.Server.Mods;
 using System.Net.Sockets;
 using Jondo.Unity.Server.Managers;
 using Jondo.Unity.Server.Network;
@@ -7,9 +8,9 @@ namespace Jondo.Unity.Server.Handlers;
 
 public static partial class DungeonHandler
 {
-    private sealed record Admission(IReadOnlyList<IHeroMember>? Followers, IReadOnlySet<long> KeyedFollowers)
+    private sealed record Admission(IReadOnlyList<ICompanion>? Followers, IReadOnlySet<long> KeyedFollowers)
     {
-        public IEnumerable<long> FollowerIds => Followers?.Select(hero => hero.CharacterId) ?? [];
+        public IEnumerable<long> FollowerIds => Followers?.Select(companion => companion.CharacterId) ?? [];
 
         public Task<int> MoveAsync(long room, int cell = TeleportHandler.MapCentre)
             => Followers is { Count: > 0 }
@@ -24,9 +25,9 @@ public static partial class DungeonHandler
         bool warnOnFailure = true, int? itemCell = null)
     {
         var master = SessionContext.Current;
-        var gameplay = Heroes.Gameplay;
-        IReadOnlyList<IHeroMember>? followers = gameplay?.DungeonFollowers(master).ToArray();
-        if (followers is not { Count: > 0 })
+        var gameplay = ServerModHooks.Get<IDungeonPartyPolicy>();
+        IReadOnlyList<ICompanion>? followers = gameplay?.DungeonFollowers(master).ToArray();
+        if (gameplay == null || followers is not { Count: > 0 })
         {
             if (itemCell is int cell && await TeleportHandler.ToMapAsync(master, room, cell, followers) < 0)
                 return null;
@@ -46,25 +47,28 @@ public static partial class DungeonHandler
 
         if (!await TeleportHandler.CanTeleportAsync(master, room)) return null;
         var now = DateTime.Now;
+        var minimumByTemplate = dungeon.Required.GroupBy(requirement => requirement.Item)
+            .ToDictionary(group => group.Key, group => Math.Max(1, group.Min(requirement => requirement.Count)));
         var inventories = new Dictionary<long, AdmissionInventory>();
-        var leader = new AdmissionInventory(master, dungeon, now, guardian: 0);
+        var leader = new AdmissionInventory(master, dungeon, minimumByTemplate, now, guardian: 0);
         inventories.Add(master.CharacterId, leader);
         var members = new List<DungeonFollowerOptions>();
         bool reserved = masterKey == 0 || leader.Reserve(masterKey);
         foreach (var follower in followers)
         {
-            if (follower.Session is not GameSession session || inventories.ContainsKey(follower.CharacterId))
+            if (follower.Session is not GameSession session || !MatchesController(follower, session, master)
+                || inventories.ContainsKey(follower.CharacterId))
                 return null;
-            var inventory = new AdmissionInventory(session, dungeon, now, guardian);
+            var inventory = new AdmissionInventory(session, dungeon, minimumByTemplate, now, guardian);
             inventories.Add(session.CharacterId, inventory);
             members.Add(new(session.CharacterId, inventory.Keys, inventory.HasKeyring, inventory.WantsKey));
         }
 
         bool requiresKey = dungeon.Required.Count != 0;
-        var plan = gameplay!.PlanDungeonAdmission(new(master.CharacterId, leader.Keys, requiresKey, members.AsReadOnly()));
+        var plan = gameplay.PlanDungeonAdmission(new(master.CharacterId, leader.Keys, requiresKey, members.AsReadOnly()));
         if (plan.MissingKeys > 0)
         {
-            await TellAsync(stream, CommandTexts.Get("dungeon.heroes_missing_keys", plan.MissingKeys));
+            await TellAsync(stream, CommandTexts.Get("dungeon.party_missing_keys", plan.MissingKeys));
             return null;
         }
 
@@ -73,10 +77,10 @@ public static partial class DungeonHandler
         if (masterKeyring) keyrings.Add(master.CharacterId);
         if (reserved && (!masterKeyring || leader.HasKeyring) && plan.MissingKeys == 0
             && TryReserveFollowers(plan.Followers, requiresKey, master.CharacterId, inventories, keyrings, keyed)
-            && Heroes.Gameplay == gameplay
-            && followers.All(follower => follower.MasterId == master.CharacterId
-                && follower.Session.CharacterId == follower.CharacterId && follower.Session.AccountId == master.AccountId
-                && !follower.Session.IsInFight && gameplay!.Find(follower.CharacterId) == follower))
+            && ServerModHooks.Get<IDungeonPartyPolicy>() == gameplay
+            && followers.All(follower => inventories.TryGetValue(follower.CharacterId, out var inventory)
+                && MatchesController(follower, inventory.Session, master)
+                && gameplay.ContainsFollower(follower)))
         {
             var bills = inventories.Values.SelectMany(inventory => inventory.Debits.Select(debit =>
                 (inventory.Session.CharacterId, Uid: debit.Key, Quantity: debit.Value))).ToArray();
@@ -100,6 +104,11 @@ public static partial class DungeonHandler
         if (warnOnFailure) await TellAsync(stream, CommandTexts.Get("dungeon.missing_item"));
         return null;
     }
+
+    private static bool MatchesController(ICompanion follower, GameSession session, GameSession master)
+        => ReferenceEquals(follower.Session, session) && follower.ControllerId == master.CharacterId
+            && session.CharacterId == follower.CharacterId && session.AccountId == master.AccountId
+            && !session.HasTransport && !session.State.IsInFight;
 
     private static bool TryReserveFollowers(IReadOnlyList<DungeonFollowerAdmission> ways, bool requiresKey,
         long masterId, Dictionary<long, AdmissionInventory> inventories, List<long> keyrings, HashSet<long> keyed)
@@ -132,19 +141,19 @@ public static partial class DungeonHandler
     private sealed class AdmissionInventory
     {
         private readonly DungeonManager.Dungeon _dungeon;
-        private readonly Dictionary<int, int> _minimumByTemplate;
+        private readonly IReadOnlyDictionary<int, int> _minimumByTemplate;
         public GameSession Session { get; }
         public Dictionary<long, (long Uid, int Template, int Quantity)> Items { get; }
         public Dictionary<long, int> Debits { get; } = new();
         public bool HasKeyring { get; }
         public bool WantsKey { get; }
 
-        public AdmissionInventory(GameSession session, DungeonManager.Dungeon dungeon, DateTime now, int guardian)
+        public AdmissionInventory(GameSession session, DungeonManager.Dungeon dungeon,
+            IReadOnlyDictionary<int, int> minimumByTemplate, DateTime now, int guardian)
         {
             Session = session;
             _dungeon = dungeon;
-            _minimumByTemplate = dungeon.Required.GroupBy(r => r.Item)
-                .ToDictionary(group => group.Key, group => Math.Max(1, group.Min(r => r.Count)));
+            _minimumByTemplate = minimumByTemplate;
             using var context = SessionContext.Push(session);
             Items = Equipment.All.Where(item => _minimumByTemplate.ContainsKey(item.Template))
                 .ToDictionary(item => item.Uid, item => (item.Uid, item.Template, item.Quantity));

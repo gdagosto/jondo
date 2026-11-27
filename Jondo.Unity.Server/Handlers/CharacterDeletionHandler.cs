@@ -128,7 +128,7 @@ namespace Jondo.Unity.Server.Handlers
             }
 
             string name = DatabaseManager.DeleteCharacter(characterId, accountId);
-            if (name.Length > 0) HuntGameplay.Current?.CharacterDeleted(characterId);
+            if (name.Length > 0) PlayerPolicies.CharacterDeleted(characterId);
             if (name.Length == 0)
             {
                 Console.WriteLine($"[Characters] Character {characterId} was not deleted.");

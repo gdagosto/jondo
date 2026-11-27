@@ -114,42 +114,22 @@ Settings with no unsaved changes to discover newly added files. Save and restart
 publish the order. Missing DLLs are marked in Settings and skipped when serving the
 list, so a DLL can be restored without losing its place.
 
-When their DLLs are available, **Heroes** and **Cazacabezas** also expose their game
-settings in the card. The Heroes switch controls hero mode on the server and the
-other controls set the hero limit and map reload behavior. Cazacabezas controls
-whether head hunts are enabled and their hunt and rest durations. The feature switches
-control gameplay and the numbered list controls which DLLs clients receive.
-
-On a headless server, edit these keys in `config/server_settings.json` and restart.
-The following is a complete JSON example for the mod settings. Keep any other
-settings you already have in the file.
-
 ```json
 {
-  "ClientMods": ["JondoFix.dll", "Cazacabezas.dll", "Heroes.dll"],
-  "Heroes": {
-    "Enabled": true,
-    "MaxHeroes": 7,
-    "ReloadMapOnSwitch": false
-  },
-  "Cazacabezas": {
-    "Enabled": false,
-    "HuntWindowMinutes": 15,
-    "RestMinutes": 30
+  "ClientMods": ["JondoFix.dll"],
+  "ServerMods": ["Example.Audit.dll", "example.greeting"],
+  "example.greeting": {
+    "Enabled": true
   }
 }
 ```
 
-An empty `ClientMods` array serves no standalone client DLLs. Enabled server
-packages can contribute their declared client DLLs. See the
-[server mod contract](server-mod-contract.md) for package order and filename conflicts.
-Existing flat Heroes and
-Cazacabezas settings are read from older files and saved under the corresponding
-mod name. Custom MelonLoader DLLs can be added to the same ordered list. Their
-configuration is handled by the mods themselves. The server Settings card provides
-gameplay controls for Heroes and Cazacabezas. The server supports up to 128 available
-DLLs in the configured order, with a maximum of 128 MiB per DLL. Clients loading
-server mods need MelonLoader 0.7.3 or newer.
+Keep your other settings when editing this file. An empty `ClientMods` array serves
+zero standalone DLLs. An active package can also contribute a client DLL from
+its manifest. A matching name in `ClientMods` sets that package DLL's position
+in the order. See the [server mod contract](server-mod-contract.md) for ordering
+and conflicts. The server supports up to 128 available DLLs of up to 128 MiB each.
+Clients loading a manifest need MelonLoader 0.7.3 or newer.
 
 When the launcher asks a player to approve a manifest, share its SHA-256 digest
 through a channel the player already trusts. The digest is computed over the
@@ -164,17 +144,21 @@ the launch. A changed approved manifest requires approval again.
 
 Keep `JondoFix.dll` available and in the configured order to support the Windows
 client, including the Windows client running under Wine. It redirects the client
-to the emulator. If you manually installed a custom mod that the server now sends,
-move the manual copy out of the client's MelonLoader `Mods/` directory before
-joining. The launcher sets aside legacy copies of the bundled Jondo mods.
+to the emulator. The launcher sets aside managed legacy copies from the client's MelonLoader
+`Mods/` directory. To retire a loose DLL from an older installation, move it
+out of the server's `mods/` folder and the client's MelonLoader `Mods/` folder.
 
-### Server packages
+### Server mods
 
-Place server packages under `server-mods/` at the emulator root. List their manifest
-IDs in `ServerMods` in `config/server_settings.json` and restart. The list defaults
-to empty. The desktop and headless server both start packages in the listed order.
+Place standalone server DLLs in `server-mods/` at the emulator root. Extract a
+`*-server-mod.zip` into the same folder so its package directory contains
+`manifest.json`. Reopen **Settings** to find both under **Server mods**. Add them
+with **+**, use the arrows to set the order, then save and restart. For a headless
+server, edit `ServerMods` in `config/server_settings.json` using DLL filenames and
+package IDs in the order you want.
+
 See the [server mod contract](server-mod-contract.md) for the package layout and
-startup failure behavior.
+startup behavior and [Writing server mods](writing-server-mods.md) for the mod API.
 
 ## Verification
 

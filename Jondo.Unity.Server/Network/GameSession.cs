@@ -9,7 +9,7 @@ using Jondo.Unity.ServerMods;
 namespace Jondo.Unity.Server.Network
 {
     /// <summary>One connected game client and all state that belongs exclusively to it.</summary>
-    public sealed class GameSession : IHeroSession
+    public sealed class GameSession : ICharacterSession
     {
         private static readonly IGameCodec DefaultCodec = new GameCodec();
         private static long _nextHaapiSessionUid;
@@ -94,11 +94,11 @@ namespace Jondo.Unity.Server.Network
         public bool HasCharacter => CharacterId > 0;
         public bool IsInWorld { get; private set; }
 
-        string IHeroSession.CharacterName => State.CharacterName ?? "";
-        bool IHeroSession.IsInFight => State.IsInFight;
-        bool IHeroSession.HasClient => Stream != null;
+        string ICharacterSession.CharacterName => State.CharacterName ?? "";
+        bool ICharacterSession.IsInFight => State.IsInFight;
+        bool ICharacterSession.HasClient => Stream != null;
 
-        HeroPosition IHeroSession.Position
+        CharacterPosition ICharacterSession.Position
         {
             get => new(State.MapId, State.CellId, State.Orientation);
             set

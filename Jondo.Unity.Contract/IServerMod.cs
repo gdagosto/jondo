@@ -1,8 +1,10 @@
+using System.Text.Json;
+
 namespace Jondo.Unity.ServerMods;
 
 public static class ServerModApi
 {
-    public const int Version = 1;
+    public const int Version = 2;
 }
 
 public interface IServerMod
@@ -19,6 +21,13 @@ public interface IServerMod
 public interface IServerModHost
 {
     void Log(string message);
+    JsonElement Settings { get; }
+
+    /// <summary>Gets a host service from the shared server mod contract.</summary>
+    T GetService<T>() where T : class;
+
+    /// <summary>Registers a gameplay hook for the lifetime of this package.</summary>
+    void RegisterHook<T>(T hook) where T : class;
 
     /// <summary>Registers cleanup for a resource, including when initialization fails.</summary>
     void RegisterCleanup(Action cleanup);

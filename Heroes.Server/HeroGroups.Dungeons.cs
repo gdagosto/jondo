@@ -4,7 +4,12 @@ namespace Heroes.Server;
 
 internal sealed partial class HeroGroups
 {
-    public IReadOnlyList<IHeroMember> DungeonFollowers(IHeroSession master)
+    public bool ContainsFollower(ICompanion follower) => Find(follower.CharacterId) == follower;
+
+    public bool CanResumeDungeon(IReadOnlyList<ICompanion> followers, long room, Func<long, long> savedRoom)
+        => followers.All(hero => savedRoom(hero.CharacterId) == room);
+
+    public IReadOnlyList<ICompanion> DungeonFollowers(ICharacterSession master)
         => Of(master.CharacterId).Where(hero => !hero.Session.IsInFight).ToArray();
 
     public DungeonAdmissionPlan PlanDungeonAdmission(DungeonAdmissionRequest request)
@@ -13,7 +18,7 @@ internal sealed partial class HeroGroups
         if (!request.RequiresKey)
             return new(followers.Select(hero => new DungeonFollowerAdmission(hero.CharacterId, DungeonFollowerEntry.Free)).ToArray());
 
-        var spare = new Dictionary<long, int> { [request.MasterId] = request.MasterKeys };
+        var spare = new Dictionary<long, int> { [request.LeaderId] = request.LeaderKeys };
         foreach (var hero in followers) spare.Add(hero.CharacterId, hero.Keys);
 
         var ways = new Dictionary<long, DungeonFollowerAdmission>();
@@ -33,7 +38,7 @@ internal sealed partial class HeroGroups
         }
 
         // Reserve everyone's own entry before lending keys. The master lends first.
-        var payers = followers.Select(hero => hero.CharacterId).Prepend(request.MasterId).ToArray();
+        var payers = followers.Select(hero => hero.CharacterId).Prepend(request.LeaderId).ToArray();
         int missing = 0;
         foreach (var hero in waiting)
         {
@@ -52,6 +57,6 @@ internal sealed partial class HeroGroups
         return missing == 0 ? new(followers.Select(hero => ways[hero.CharacterId]).ToArray()) : new([], missing);
     }
 
-    public Task MoveDungeonFollowersAsync(IHeroSession master, long mapLeft, IReadOnlyList<IHeroMember> admitted)
+    public Task MoveDungeonFollowersAsync(ICharacterSession master, long mapLeft, IReadOnlyList<ICompanion> admitted)
         => MoveFollowersAsync(master, mapLeft, admitted);
 }

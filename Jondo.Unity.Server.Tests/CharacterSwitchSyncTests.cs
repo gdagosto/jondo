@@ -7,10 +7,10 @@ using Xunit;
 
 namespace Jondo.Unity.Server.Tests;
 
-public sealed class HeroSwitchSyncTests
+public sealed class CharacterSwitchSyncTests
 {
     [Fact]
-    public void Hero_switch_resets_wardrobe_draft_state()
+    public void Character_switch_resets_wardrobe_draft_state()
     {
         var state = new SessionState
         {
@@ -19,19 +19,19 @@ public sealed class HeroSwitchSyncTests
             WardrobeDraftOrnament = 10
         };
 
-        // On hero switch, draft state must be cleared to prevent cross-character outfit leakage
+        // Reset the outfit draft before loading the next character.
         state.IsWardrobeDraftLoaded = false;
 
         Assert.False(state.IsWardrobeDraftLoaded);
     }
 
     [Fact]
-    public void Hero_switch_look_changed_generates_valid_lxc_payload()
+    public void Character_switch_look_changed_generates_valid_lxc_payload()
     {
         var character = new DbCharacter
         {
             Id = 123456,
-            Name = "TestHero",
+            Name = "TestCharacter",
             Breed = 1,
             Sex = 0,
             Colors = CharacterColors.FromRgb(new List<long> { 0xFF0000, 0x00FF00, 0x0000FF, -1, -1 })
@@ -47,24 +47,23 @@ public sealed class HeroSwitchSyncTests
     }
 
     [Fact]
-    public void Hero_switch_session_state_reflects_active_hero()
+    public void Character_switch_session_state_reflects_active_character()
     {
         var state = new SessionState
         {
             CharacterId = 100,
-            CharacterName = "Master",
+            CharacterName = "FirstCharacter",
             Breed = 8,
             CharacterLevel = 50
         };
 
-        // When switching to hero 200 (Cra, level 80)
         state.CharacterId = 200;
-        state.CharacterName = "HeroCra";
+        state.CharacterName = "TestCra";
         state.Breed = 9;
         state.CharacterLevel = 80;
 
         Assert.Equal(200, state.CharacterId);
-        Assert.Equal("HeroCra", state.CharacterName);
+        Assert.Equal("TestCra", state.CharacterName);
         Assert.Equal(9, state.Breed);
         Assert.Equal(80, state.CharacterLevel);
     }

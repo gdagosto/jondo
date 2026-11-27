@@ -101,39 +101,18 @@ namespace Jondo.Unity.Server
         public int SimulatedPlayersMax { get; set; } = 20;
 
         /// <summary>Client mods to serve, in their configured load order.</summary>
-        public string[] ClientMods { get; set; } = ["JondoFix.dll", "Cazacabezas.dll", "Heroes.dll"];
+        public string[] ClientMods { get; set; } = ["JondoFix.dll"];
 
-        /// <summary>Server mod manifest IDs in startup order. Heroes is enabled by its own setting.</summary>
+        /// <summary>Server mod filenames and package manifest IDs in startup order.</summary>
         public string[] ServerMods { get; set; } = [];
 
-        public HeroesModSettings Heroes { get; set; } = new();
-        public CazacabezasModSettings Cazacabezas { get; set; } = new();
-
-        public sealed record HeroesModSettings
-        {
-            public bool Enabled { get; set; } = true;
-            public int MaxHeroes { get; set; } = 7;
-            public bool ReloadMapOnSwitch { get; set; }
-        }
-
-        public sealed record CazacabezasModSettings
-        {
-            public bool Enabled { get; set; }
-            public int HuntWindowMinutes { get; set; } = 15;
-            public int RestMinutes { get; set; } = 30;
-        }
-
-        [JsonIgnore] public bool HeroMode { get => Heroes.Enabled; set => Heroes.Enabled = value; }
-        [JsonIgnore] public int HeroesMax { get => Heroes.MaxHeroes; set => Heroes.MaxHeroes = value; }
-        [JsonIgnore] public bool HeroSwitchReloadsMap { get => Heroes.ReloadMapOnSwitch; set => Heroes.ReloadMapOnSwitch = value; }
-        [JsonIgnore] public bool HeadHunters { get => Cazacabezas.Enabled; set => Cazacabezas.Enabled = value; }
-        [JsonIgnore] public int HeadHuntWindowMinutes { get => Cazacabezas.HuntWindowMinutes; set => Cazacabezas.HuntWindowMinutes = value; }
-        [JsonIgnore] public int HeadHuntRestMinutes { get => Cazacabezas.RestMinutes; set => Cazacabezas.RestMinutes = value; }
+        /// <summary>Package settings and unrecognized fields preserved when the server saves this file.</summary>
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement> ModSettings { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
         /// How many characters an account may have per category of server: the server list's
-        /// «Clásico (5/8)». Eight by default, a whole group of heroes with its master; the real
-        /// server's is five. Not in the settings window, full at its smallest size: set in the file.
+        /// «Clásico (5/8)». Eight by default; the official server's is five.
         /// </summary>
         public int CharacterSlots { get; set; } = 8;
 
@@ -190,40 +169,11 @@ namespace Jondo.Unity.Server
 
             settings.ClientMods ??= new ServerSettings().ClientMods;
             settings.ServerMods ??= [];
-            var keys = doc.RootElement.EnumerateObject().Select(property => property.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            bool migrateHeroes = settings.Heroes == null || !keys.Contains(nameof(Heroes));
-            bool migrateCazacabezas = settings.Cazacabezas == null || !keys.Contains(nameof(Cazacabezas));
-            if (!migrateHeroes && !migrateCazacabezas) return settings;
-
-            var legacy = doc.RootElement.Deserialize<LegacyModSettings>(Json)!;
-            if (migrateHeroes)
-            {
-                var heroes = new HeroesModSettings();
-                heroes.Enabled = legacy.HeroMode ?? heroes.Enabled;
-                heroes.MaxHeroes = legacy.HeroesMax ?? heroes.MaxHeroes;
-                heroes.ReloadMapOnSwitch = legacy.HeroSwitchReloadsMap ?? heroes.ReloadMapOnSwitch;
-                settings.Heroes = heroes;
-            }
-            if (migrateCazacabezas)
-            {
-                var cazacabezas = new CazacabezasModSettings();
-                cazacabezas.Enabled = legacy.HeadHunters ?? cazacabezas.Enabled;
-                cazacabezas.HuntWindowMinutes = legacy.HeadHuntWindowMinutes ?? cazacabezas.HuntWindowMinutes;
-                cazacabezas.RestMinutes = legacy.HeadHuntRestMinutes ?? cazacabezas.RestMinutes;
-                settings.Cazacabezas = cazacabezas;
-            }
+            var extra = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (key, value) in settings.ModSettings)
+                extra[key] = value;
+            settings.ModSettings = extra;
             return settings;
-        }
-
-        private sealed class LegacyModSettings
-        {
-            public LegacyModSettings() { }
-            public bool? HeroMode { get; set; }
-            public int? HeroesMax { get; set; }
-            public bool? HeroSwitchReloadsMap { get; set; }
-            public bool? HeadHunters { get; set; }
-            public int? HeadHuntWindowMinutes { get; set; }
-            public int? HeadHuntRestMinutes { get; set; }
         }
 
         /// <summary>Writes these settings to the file, for the next start.</summary>
@@ -249,8 +199,7 @@ namespace Jondo.Unity.Server
             var copy = (ServerSettings)MemberwiseClone();
             copy.ClientMods = (string[])ClientMods.Clone();
             copy.ServerMods = (string[])ServerMods.Clone();
-            copy.Heroes = Heroes with { };
-            copy.Cazacabezas = Cazacabezas with { };
+            copy.ModSettings = new(ModSettings, StringComparer.OrdinalIgnoreCase);
             return copy;
         }
 

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Collections.Concurrent;
 using System.Data.Common;
 using System.Globalization;
@@ -39,7 +40,9 @@ namespace Cazacabezas.Server
     /// RestUntilMs)</c>.
     /// </para>
     /// </remarks>
-    internal sealed class HeadHunts(IHuntWorld world) : IHuntGameplay
+    internal sealed class HeadHunts(IAlignmentWorld world, IWorldStorage storage, ISimulatedPlayerWorld bots,
+        HuntSettings settings, Action<string> log)
+        : IPlayerActivityPolicy, IPvpEvents, IDialogueCurrency, ISimulatedPlayerEncounters
     {
         public const int MinHunterLevel = 50, MinTargetLevel = 30, LevelsBelow = 20, LevelsAbove = 50, HuntersPerTarget = 3;
         public const int KillHonour = 50, SurvivalHonour = 50, SurvivalPay = 1;
@@ -53,9 +56,9 @@ namespace Cazacabezas.Server
         // The client's own messages: info 217 and 180 and 80, warning 317.
         public const int NoticePlaced = 217, SurvivedHunter = 180, ValourReward = 80;
 
-        public bool On => world.Settings.Enabled;
-        public TimeSpan Window => TimeSpan.FromMinutes(Math.Max(1, world.Settings.WindowMinutes));
-        public TimeSpan Rest => TimeSpan.FromMinutes(Math.Max(0, world.Settings.RestMinutes));
+        public bool On => settings.Enabled;
+        public TimeSpan Window => TimeSpan.FromMinutes(Math.Max(1, settings.HuntWindowMinutes));
+        public TimeSpan Rest => TimeSpan.FromMinutes(Math.Max(0, settings.RestMinutes));
 
         /// <summary>A hunter's record: his chapeuvepés, his kills, the hunts he survived and lost, his streak.</summary>
         public sealed record Hunter(long Id, int Chapeuvepes = 0, int Kills = 0, int Survivals = 0, int Failures = 0,
@@ -116,7 +119,7 @@ namespace Cazacabezas.Server
 
         // ─── What the prey may not do while the hunt is open ───────────────────────────────
 
-        public async Task<bool> HoldsAsync(long me, HuntActivity what, string language, Func<string, Task>? notify)
+        public async Task<bool> BlocksActivityAsync(long me, PlayerActivity what, string language, Func<string, Task>? notify)
         {
             if (me == 0 || !HuntedNow(me)) return false;
             if (notify != null)
@@ -124,7 +127,7 @@ namespace Cazacabezas.Server
                 string doing = HuntTexts.Get(language, "hunt.held." + what.ToString().ToLowerInvariant());
                 await notify(HuntTexts.Get(language, "hunt.held", doing));
             }
-            Console.WriteLine($"[Head hunts] {me} is hunted and may not go into a {what}.");
+            log($"[Head hunts] {me} is hunted and may not go into a {what}.");
             return true;
         }
 
@@ -136,17 +139,27 @@ namespace Cazacabezas.Server
         /// A fight between these two refused, and why, to the one in session: he is the prey, or the
         /// other one is somebody else's. True when it was refused.
         /// </summary>
-        public async Task<bool> RefusesFightAsync(long me, long other, string language, Func<string, Task> notify)
+        public async Task<bool> BlocksDuelAsync(long me, long other, string language, Func<string, Task> notify)
         {
             if (MayFight(me, other)) return false;
-            if (HuntedNow(me) && !HuntsNow(other, me)) return await HoldsAsync(me, HuntActivity.Fight, language, notify);
+            if (HuntedNow(me) && !HuntsNow(other, me)) return await BlocksActivityAsync(me, PlayerActivity.Fight, language, notify);
 
             await notify(HuntTexts.Get(language, "hunt.taken", NameOf(other)));
-            Console.WriteLine($"[Head hunts] {me} may not fight {other}, whom somebody else is hunting.");
+            log($"[Head hunts] {me} may not fight {other}, whom somebody else is hunting.");
             return true;
         }
 
-        /// <summary>Chapeuvepés given, or taken back; false when he has not that many to give back.</summary>
+        public int Cost(IReadOnlyDictionary<string, JsonElement> fields)
+            => fields.TryGetValue("chapeuvepes", out var value) && value.ValueKind == JsonValueKind.Number
+                && value.TryGetInt32(out int cost) ? Math.Max(0, cost) : 0;
+
+        public bool AdjustBalance(long characterId, int amount) => Pay(characterId, amount);
+
+        public bool BlocksAutomaticEncounter(long characterId, AutomaticEncounter encounter)
+            => encounter is AutomaticEncounter.MonsterAggression or AutomaticEncounter.TurnOffPvp
+                && HuntedNow(characterId);
+
+        /// <summary>Adjusts a character's chapeuvepé balance if it covers the amount.</summary>
         public bool Pay(long characterId, int chapeuvepes)
         {
             lock (_gate)
@@ -240,7 +253,7 @@ namespace Cazacabezas.Server
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[Head hunts] The board could not be read: {ex.Message}");
+                log($"[Head hunts] The board could not be read: {ex.Message}");
             }
             return list.OrderByDescending(c => c.Online).ThenByDescending(c => c.Bounty).ThenBy(c => c.Name).ToList();
         }
@@ -259,7 +272,7 @@ namespace Cazacabezas.Server
                 Keep(new Order { Hunter = hunterId, Target = targetId, TakenMs = Now });
             }
             await world.SendSystemMessageAsync(hunterId, NoticePlaced);
-            Console.WriteLine($"[Head hunts] {hunterId} hunts {targetId}.");
+            log($"[Head hunts] {hunterId} hunts {targetId}.");
             return "ok";
         }
 
@@ -360,7 +373,7 @@ namespace Cazacabezas.Server
             }
         }
 
-        private bool OutInTheOpen(HuntPresence prey)
+        private bool OutInTheOpen(CharacterPresence prey)
         {
             if (prey.IsInFight) return false;
             var location = world.Locate(prey.MapId);
@@ -373,7 +386,7 @@ namespace Cazacabezas.Server
         /// </summary>
         private async Task OpenAsync(Order order, long now)
         {
-            using var quiet = world.QuietForBots(order.Hunter, order.Target);
+            using var quiet = bots.QuietForBots(order.Hunter, order.Target);
             var window = Window;
             lock (_gate)
             {
@@ -389,7 +402,7 @@ namespace Cazacabezas.Server
                 await world.RaisePvpWingsAsync(order.Target);
             await world.LeaveArenaQueueAsync(order.Target);
             await SightedAsync(order);
-            Console.WriteLine($"[Head hunts] The hunt of {order.Hunter} on {order.Target} opens for {minutes} minutes.");
+            log($"[Head hunts] The hunt of {order.Hunter} on {order.Target} opens for {minutes} minutes.");
         }
 
         private async Task CloseAsync(Order order, long now, string why)
@@ -432,10 +445,10 @@ namespace Cazacabezas.Server
 
         private string Link((int X, int Y) at) => $"{{{{map,{at.X},{at.Y},1::[{at.X},{at.Y}]}}}}";
 
-        public (int X, int Y)? SeenAt(Order order, HuntPresence? prey)
+        public (int X, int Y)? SeenAt(Order order, CharacterPresence? prey)
             => PlaceOf(prey) ?? order.LastSeen;
 
-        private (int X, int Y)? PlaceOf(HuntPresence? prey)
+        private (int X, int Y)? PlaceOf(CharacterPresence? prey)
             => prey == null ? null : world.Locate(prey.MapId).WorldPosition;
 
         // ─── The end of an aggression ──────────────────────────────────────────────────────
@@ -444,7 +457,7 @@ namespace Cazacabezas.Server
         /// An aggression of the cities' war over: the hunts it settles -- a hunter who beat his prey
         /// while the hunt was open, or a prey who beat his hunter -- and everyone's streak.
         /// </summary>
-        public async Task AggressionEndedAsync(IReadOnlyList<HuntCombatant> winners, IReadOnlyList<HuntCombatant> losers)
+        public async Task AggressionEndedAsync(IReadOnlyList<PvpCombatant> winners, IReadOnlyList<PvpCombatant> losers)
         {
             if (!On) return;
             var won = winners.DistinctBy(f => f.Id).ToDictionary(f => f.Id, f => f.Level);
@@ -477,7 +490,7 @@ namespace Cazacabezas.Server
 
         private async Task KilledAsync(Order order, long now, int hunterLevel, int targetLevel)
         {
-            using var quiet = world.QuietForBots(order.Hunter, order.Target);
+            using var quiet = bots.QuietForBots(order.Hunter, order.Target);
             int bounty;
             lock (_gate)
             {
@@ -492,12 +505,12 @@ namespace Cazacabezas.Server
             await world.SendSystemMessageAsync(order.Hunter, ValourReward, KillHonour.ToString(CultureInfo.InvariantCulture));
             await NoticeAsync(order.Hunter, "hunt.killed", NameOf(order.Target), bounty);
             await NoticeAsync(order.Target, "hunt.fallen", NameOf(order.Hunter));
-            Console.WriteLine($"[Head hunts] {order.Hunter} got {order.Target}: {bounty} chapeuvepés.");
+            log($"[Head hunts] {order.Hunter} got {order.Target}: {bounty} chapeuvepés.");
         }
 
         private async Task SurvivedAsync(Order order, long now)
         {
-            using var quiet = world.QuietForBots(order.Hunter, order.Target);
+            using var quiet = bots.QuietForBots(order.Hunter, order.Target);
             lock (_gate)
             {
                 if (!IsCurrent(order) || !order.Open(now)) return;
@@ -512,7 +525,7 @@ namespace Cazacabezas.Server
             await world.SendSystemMessageAsync(order.Target, SurvivedHunter, NameOf(order.Hunter));
             await NoticeAsync(order.Target, "hunt.survived", SurvivalPay, SurvivalHonour);
             await NoticeAsync(order.Hunter, "hunt.failed", NameOf(order.Target));
-            Console.WriteLine($"[Head hunts] {order.Target} survived {order.Hunter}.");
+            log($"[Head hunts] {order.Target} survived {order.Hunter}.");
         }
 
         private string NameOf(long characterId)
@@ -538,7 +551,7 @@ namespace Cazacabezas.Server
                 if (_loaded) return;
                 try
                 {
-                    using var connection = world.OpenWorldDatabase();
+                    using var connection = storage.OpenWorldDatabase();
                     Ensure(connection);
                     var hunters = connection.CreateCommand();
                     hunters.CommandText = "SELECT CharacterId, Chapeuvepes, Kills, Survivals, Failures, Streak, LockedUntilMs FROM HeadHunters;";
@@ -559,7 +572,7 @@ namespace Cazacabezas.Server
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[Head hunts] Could not read the hunters: {ex.Message}");
+                    log($"[Head hunts] Could not read the hunters: {ex.Message}");
                 }
                 _loaded = true;
             }
@@ -589,7 +602,7 @@ namespace Cazacabezas.Server
         {
             try
             {
-                using var connection = world.OpenWorldDatabase();
+                using var connection = storage.OpenWorldDatabase();
                 Ensure(connection);
                 var command = connection.CreateCommand();
                 command.CommandText = sql;
@@ -598,7 +611,7 @@ namespace Cazacabezas.Server
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[Head hunts] Could not keep a hunt: {ex.Message}");
+                log($"[Head hunts] Could not keep a hunt: {ex.Message}");
             }
         }
 
@@ -610,7 +623,7 @@ namespace Cazacabezas.Server
             command.Parameters.Add(parameter);
         }
 
-        public async Task<bool> TryTakeOnlineOrderAsync(long characterId, int level, bool inWorld, Func<int, int> choose)
+        public async Task<bool> TryFindEncounterAsync(long characterId, int level, bool inWorld, Func<int, int> choose)
         {
             if (!On || OrderOf(characterId) != null || CannotHunt(characterId, level) != null || !inWorld)
                 return false;
@@ -618,7 +631,7 @@ namespace Cazacabezas.Server
             return online.Count != 0 && await TakeAsync(characterId, level, online[choose(online.Count)].Id) == "ok";
         }
 
-        public long? OpenTarget(long characterId)
+        public long? EncounterTarget(long characterId)
             => OrderOf(characterId) is { } order && order.Open(Now) ? order.Target : null;
     }
 }

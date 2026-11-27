@@ -1,3 +1,5 @@
+using System.Text.Json;
+using Jondo.Unity.Server.Mods;
 using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
@@ -25,7 +27,9 @@ internal sealed class ServerSettingsView : UserControl
     internal readonly ServerSettingsEditor Editor;
     internal IReadOnlyList<string> AvailableMods { get; }
 
-    internal static string[] DiscoverMods() => ClientModCatalog.ListAvailable(Paths.ClientModsDirectory);
+    internal static string[] DiscoverMods() => ClientModCatalog.ListAvailable(Paths.ClientModsDirectory)
+        .Concat(Mods.ServerModLoader.ListClientAssets(Paths.ServerModsDirectory))
+        .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 
     /// <summary>How Save writes the settings: the file, unless a test gives another way.</summary>
     internal Action<ServerSettings> Write { get; set; } = settings =>
@@ -53,7 +57,8 @@ internal sealed class ServerSettingsView : UserControl
     /// </param>
     /// <param name="embedded">Inside the dashboard, whose page already has the title.</param>
     internal ServerSettingsView(Language language, ServerSettings saved, ServerSettings running, Action leave,
-        bool embedded = false, IReadOnlyList<string>? availableMods = null)
+        bool embedded = false, IReadOnlyList<string>? availableMods = null,
+        IReadOnlyList<ServerModConfiguration>? serverMods = null)
     {
         _language = language;
         _leave = leave;
@@ -102,7 +107,7 @@ internal sealed class ServerSettingsView : UserControl
         var loot = Toggle("RandomLoot", "RandomLootHint", s.RandomLoot, v => { s.RandomLoot = v; LootState(v); });
         LootState(s.RandomLoot);
         var lootCard = Card("Loot", loot, chance, rarities, levels);
-        var mods = ModSettings(AvailableMods);
+        var mods = ModSettings(AvailableMods, serverMods ?? ServerModLoader.ListSettings(Paths.ServerModsDirectory));
         var raids = Card("Raids",
             Number("RaidMin", "RaidMinHint", s.RaidMinPlayers, 0, 16, 1, "", v => s.RaidMinPlayers = (int)v),
             Number("Matchmaking", "MatchmakingHint", s.MatchmakingGroupSize, 0, 4, 1, "", v => s.MatchmakingGroupSize = (int)v));
@@ -142,46 +147,75 @@ internal sealed class ServerSettingsView : UserControl
         Changed();
     }
 
-    private Border ModSettings(IReadOnlyList<string> available)
+    private Border ModSettings(IReadOnlyList<string> available, IReadOnlyList<ServerModConfiguration> packages)
     {
         var s = Editor.Edited;
         var comparer = StringComparer.OrdinalIgnoreCase;
-        var files = available.ToHashSet(comparer);
-        var order = new StackPanel { Spacing = 6 };
+        var clientIds = available.ToHashSet(comparer);
+        string[] serverIds = packages.Select(package => package.Id).ToArray();
+        var installed = serverIds.ToHashSet(comparer);
+        var clientOrder = new StackPanel { Spacing = 6 };
+        var serverOrder = new StackPanel { Spacing = 6 };
         var details = new StackPanel { Spacing = 8 };
 
-        Expander Settings(string name, params Control[] controls)
+        string? Localized(LocalizedModText? text) => _language switch
+        {
+            Language.En => text?.En ?? text?.Es,
+            Language.Fr => text?.Fr ?? text?.En ?? text?.Es,
+            _ => text?.Es ?? text?.En,
+        };
+
+        foreach (var package in packages.Where(package => package.Fields.Length > 0))
         {
             var content = new StackPanel { Spacing = 12 };
-            foreach (var control in controls) content.Children.Add(control);
-            return new Expander { Header = name, Content = content, HorizontalAlignment = HorizontalAlignment.Stretch };
+            var values = ServerModConfiguration.Resolve(s, package.Id, package);
+            var dependencies = new List<Control>();
+            bool enabled = package.ActivationSetting == null
+                || !values.TryGetProperty(package.ActivationSetting, out var activation)
+                || activation.ValueKind != JsonValueKind.False;
+            void SetEnabled(bool active)
+            {
+                foreach (var dependency in dependencies) dependency.IsEnabled = active;
+            }
+
+            foreach (var field in package.Fields)
+            {
+                if (!values.TryGetProperty(field.Key, out var value)) continue;
+                string name = $"{package.Id}_{field.Key}";
+                string label = Localized(field.Label) ?? field.Key;
+                string? hint = Localized(field.Hint);
+                bool activates = field.Key == package.ActivationSetting;
+                Control? setting = null;
+                if (value.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                    setting = Toggle(name, null, value.GetBoolean(), v =>
+                    {
+                        ServerModConfiguration.Set(s, package, field.Key, v);
+                        if (activates) SetEnabled(v);
+                    }, label, hint);
+                else if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int number)
+                    && field.Minimum <= field.Maximum && field.Step > 0)
+                    setting = Number(name, null, number, field.Minimum, field.Maximum,
+                        field.Step, field.Unit ?? "", v => ServerModConfiguration.Set(s, package, field.Key, (int)v),
+                        displayLabel: label, displayHint: hint, setInitialValue: false);
+
+                if (setting == null) continue;
+                if (!activates) dependencies.Add(setting);
+                content.Children.Add(setting);
+            }
+            SetEnabled(enabled);
+            if (content.Children.Count > 0)
+                details.Children.Add(new Expander
+                {
+                    Header = package.Name ?? package.Id,
+                    Content = content,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                });
         }
 
-        if (files.Contains("Heroes.dll"))
-        {
-            var heroes = s.Heroes;
-            var max = Number("HeroesMax", null, heroes.MaxHeroes, 1, Managers.Heroes.Most, 1, "", v => heroes.MaxHeroes = (int)v);
-            var reload = Toggle("HeroReload", "HeroReloadHint", heroes.ReloadMapOnSwitch, v => heroes.ReloadMapOnSwitch = v);
-            void SetEnabled(bool enabled) { heroes.Enabled = enabled; max.IsEnabled = enabled; reload.IsEnabled = enabled; }
-            var enabled = Toggle("HeroMode", "HeroModeHint", heroes.Enabled, SetEnabled);
-            SetEnabled(heroes.Enabled);
-            details.Children.Add(Settings("Heroes", enabled, max, reload));
-        }
-
-        if (files.Contains("Cazacabezas.dll"))
-        {
-            var hunters = s.Cazacabezas;
-            var hunt = Number("HuntMinutes", null, hunters.HuntWindowMinutes, 1, 120, 5, "min", v => hunters.HuntWindowMinutes = (int)v);
-            var rest = Number("RestMinutes", null, hunters.RestMinutes, 0, 600, 5, "min", v => hunters.RestMinutes = (int)v);
-            void SetEnabled(bool enabled) { hunters.Enabled = enabled; hunt.IsEnabled = enabled; rest.IsEnabled = enabled; }
-            var enabled = Toggle("HuntersOn", "HuntersOnHint", hunters.Enabled, SetEnabled);
-            SetEnabled(hunters.Enabled);
-            details.Children.Add(Settings("Cazacabezas", enabled, hunt, rest));
-        }
-
-        void Render(string? focusedFile = null, string? focusedAction = null)
+        void Render(StackPanel order, bool server, string? focusedFile = null, string? focusedAction = null)
         {
             order.Children.Clear();
+            var files = server ? installed : clientIds;
             Button? focus = null;
             Button ActionButton(string label, string action, string file, Action click)
             {
@@ -194,11 +228,13 @@ internal sealed class ServerSettingsView : UserControl
                 return button;
             }
 
-            var configured = s.ClientMods.OfType<string>().Where(file => !string.IsNullOrWhiteSpace(file)).ToArray();
+            var configured = (server ? s.ServerMods : s.ClientMods).OfType<string>()
+                .Where(file => !string.IsNullOrWhiteSpace(file)).ToArray();
             void Edit(IEnumerable<string> next, string file, string action)
             {
-                s.ClientMods = next.ToArray();
-                Render(file, action);
+                if (server) s.ServerMods = next.ToArray();
+                else s.ClientMods = next.ToArray();
+                Render(order, server, file, action);
                 Changed();
             }
 
@@ -225,20 +261,22 @@ internal sealed class ServerSettingsView : UserControl
                 order.Children.Add(ModRow($"{index + 1}. {file}" + (files.Contains(file) ? "" : $" ({T("ModMissing")})"), actions));
             }
 
-            bool canAdd = configured.Count(files.Contains) < ClientModManifest.MaxEntries;
-            foreach (string file in available.Except(configured, comparer))
+            bool canAdd = server || configured.Count(files.Contains) < ClientModManifest.MaxEntries;
+            foreach (string file in (server ? serverIds : available).Except(configured, comparer))
             {
                 var add = ActionButton("+", "ModAdd", file, () => Edit(configured.Append(file), file, "ModRemove"));
                 add.IsEnabled = canAdd;
                 order.Children.Add(ModRow(file, add));
             }
 
-            if (order.Children.Count == 0) order.Children.Add(Note("NoMods"));
+            if (order.Children.Count == 0) order.Children.Add(Note(server ? "NoServerMods" : "NoMods"));
             if (focus?.IsEnabled == true) focus.Focus();
         }
 
-        Render();
-        return Card("Mods", CardHint("ModsHint"), order, details);
+        Render(clientOrder, server: false);
+        Render(serverOrder, server: true);
+        return Card("Mods", CardHint("ModsHint"), clientOrder,
+            ServerTheme.Text(T("ServerMods"), 14, LauncherPalette.LightGold), serverOrder, details);
     }
 
     private static Grid ModRow(string label, Control actions)
@@ -285,26 +323,29 @@ internal sealed class ServerSettingsView : UserControl
         return card;
     }
 
-    private Control Row(string label, string hint, Control input)
+    private Control Row(string label, string hint, Control input, string? displayLabel = null, string? displayHint = null)
     {
         var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
         input.Margin = new Thickness(12, 0, 0, 0);
         var labels = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
-        var text = ServerTheme.Text(T(label)); text.TextWrapping = TextWrapping.Wrap;
+        var text = ServerTheme.Text(displayLabel ?? T(label)); text.TextWrapping = TextWrapping.Wrap;
         labels.Children.Add(text);
-        if (hint != null)
+        if (displayHint != null || hint != null)
         {
-            var note = Note(hint);
+            string explanation = displayHint ?? T(hint!);
+            var note = ServerTheme.Text(explanation, 12, LauncherPalette.MutedGold);
+            note.TextWrapping = TextWrapping.Wrap;
             labels.Children.Add(note);
             _cards.Hints.Add(note);
-            ToolTip.SetTip(row, T(hint));
+            ToolTip.SetTip(row, explanation);
         }
         row.Children.Add(labels); Grid.SetColumn(input, 1); row.Children.Add(input);
         return row;
     }
 
     private Control Number(string label, string hint, decimal value, decimal min, decimal max, decimal step,
-        string unit, Action<decimal> set, int decimals = 0)
+        string unit, Action<decimal> set, int decimals = 0, string? displayLabel = null,
+        string? displayHint = null, bool setInitialValue = true)
     {
         var number = new NumericUpDown
         {
@@ -316,7 +357,7 @@ internal sealed class ServerSettingsView : UserControl
         number.Text = number.Value.Value.ToString(Culture.NumberFormat);
         _numbers.Add(number);
         // Clamped legacy file values must agree with what is displayed and will be saved.
-        set(number.Value.Value);
+        if (setInitialValue) set(number.Value.Value);
         number.ValueChanged += (_, _) =>
         {
             if (number.Value is decimal v) set(v);
@@ -326,14 +367,15 @@ internal sealed class ServerSettingsView : UserControl
         var input = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
         input.Children.Add(number);
         if (unit.Length > 0) input.Children.Add(ServerTheme.Text(unit, 12, LauncherPalette.MutedGold));
-        return Row(label, hint, input);
+        return Row(label, hint, input, displayLabel, displayHint);
     }
 
-    private Control Toggle(string label, string hint, bool value, Action<bool> set)
+    private Control Toggle(string label, string hint, bool value, Action<bool> set,
+        string? displayLabel = null, string? displayHint = null)
     {
         var toggle = new ToggleSwitch { Name = label, IsChecked = value, OnContent = "", OffContent = "", VerticalAlignment = VerticalAlignment.Center };
         toggle.IsCheckedChanged += (_, _) => { set(toggle.IsChecked == true); Changed(); };
-        return Row(label, hint, toggle);
+        return Row(label, hint, toggle, displayLabel, displayHint);
     }
 
     private Control Rarities()

@@ -499,7 +499,7 @@ namespace Jondo.Unity.Server.Handlers
             {
                 if (FightById(fightId) != fight || !me.IsInWorld || me.CharacterId != character || me.State.SpectatingFightId != 0) return;
                 if (named == 0) await WatchAsync(me, fight, fromTheMap: true);
-                else if (!await HuntGameplay.HoldsAsync(me.Stream, HuntActivity.Fight))
+                else if (!await PlayerPolicies.BlocksActivityAsync(me.Stream, PlayerActivity.Fight))
                     await JoinCheckedAsync(me, fight, named);
             });
         }

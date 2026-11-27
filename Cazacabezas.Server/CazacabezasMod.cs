@@ -8,14 +8,16 @@ namespace Cazacabezas.Server;
 public sealed class CazacabezasMod : IServerMod
 {
     private static readonly TimeSpan TickInterval = TimeSpan.FromSeconds(5);
+    internal HeadHunts? Hunts { get; private set; }
     private Timer? _timer;
     private int _ticking;
 
     public void Initialize(IServerModHost host)
     {
-        var runtime = (IHuntModHost)host;
-        var world = runtime.World;
-        var hunts = new HeadHunts(world);
+        var world = host.GetService<IAlignmentWorld>();
+        var settings = host.Settings.Deserialize<HuntSettings>() ?? new();
+        var hunts = Hunts = new HeadHunts(world, host.GetService<IWorldStorage>(),
+            host.GetService<ISimulatedPlayerWorld>(), settings, host.Log);
         var responses = new HuntResponses(world, hunts);
         Register("status", (hunter, _) => new(200, responses.StatusJson(hunter)));
         Register("board", (hunter, _) => new(200, responses.BoardJson(hunter)));
@@ -23,7 +25,10 @@ public sealed class CazacabezasMod : IServerMod
         Register("abandon", (hunter, _) => hunts.Abandon(hunter.Id)
             ? new(200, """{"abandoned":true}""")
             : Conflict("none"));
-        runtime.RegisterHuntGameplay(hunts);
+        host.RegisterHook<IPlayerActivityPolicy>(hunts);
+        host.RegisterHook<IPvpEvents>(hunts);
+        host.RegisterHook<IDialogueCurrency>(hunts);
+        host.RegisterHook<ISimulatedPlayerEncounters>(hunts);
         host.RegisterCleanup(Shutdown);
         _timer = new Timer(_ =>
         {
@@ -33,7 +38,7 @@ public sealed class CazacabezasMod : IServerMod
             finally { Interlocked.Exchange(ref _ticking, 0); }
         }, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
 
-        void Register(string name, Func<SelectedHunter, string, ServerModControlResponse> handle)
+        void Register(string name, Func<SelectedCharacter, string, ServerModControlResponse> handle)
         {
             host.RegisterAuthenticatedControlRoute(Contract.Prefijo + "headhunts/" + name, request =>
             {
@@ -51,7 +56,7 @@ public sealed class CazacabezasMod : IServerMod
         if (timer != null) timer.DisposeAsync().GetAwaiter().GetResult();
     }
 
-    private static ServerModControlResponse Take(HeadHunts hunts, SelectedHunter hunter, string body)
+    private static ServerModControlResponse Take(HeadHunts hunts, SelectedCharacter hunter, string body)
     {
         long target = ReadTarget(body);
         string result = hunts.TakeAsync(hunter.Id, hunter.Level, target).GetAwaiter().GetResult();

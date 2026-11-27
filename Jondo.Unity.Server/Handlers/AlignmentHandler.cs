@@ -1,3 +1,4 @@
+using Jondo.Unity.ServerMods;
 using System;
 using System.Linq;
 using System.Net.Sockets;
@@ -38,7 +39,7 @@ namespace Jondo.Unity.Server.Handlers
     public static class AlignmentHandler
     {
         public const int Chantal = 5064, Morry = 7658;
-        private const int CannotHideWhileHunted = 317;
+        private const int CannotDisablePvp = 317;
 
         // Chantal Inea's sentences and replies.
         private const long SwearIntro = 36023, ConfirmBonta = 36024, ConfirmBrakmar = 36025;
@@ -143,7 +144,7 @@ namespace Jondo.Unity.Server.Handlers
             }
 
             Alignments.Set(Me, side, Now);
-            HuntGameplay.Current?.AlignmentChanged(Me);
+            PlayerPolicies.AlignmentChanged(Me);
             await SlotLookHandler.RedrawAsync(stream);
             await CharacteristicsMessages.Live.SendAsync(SessionContext.Current);
             await WriteAsync(stream, ConnectionProtocol.Push(Op.Hod, BuildRank(Alignments.Rank())));
@@ -167,12 +168,11 @@ namespace Jondo.Unity.Server.Handlers
             byte[]? hnu = ConnectionProtocol.ReadPayload(payload, "hnu");
             if (hnu == null || !Alignments.Of(Me).Sworn) return;
             bool on = ProtoMessage.Parse(hnu).Fields.Any(f => f.FieldNumber == 1 && f.WireType == 0 && f.VarIntValue != 0);
-            // A prey whose hunt is open cannot fold his wings: «No puedes ocultar tu alineamiento en
-            // una zona de agresión», and the sheet puts the switch back on.
-            if (!on && HuntGameplay.HuntedNow(Me))
+            // A rejected PvP change sends the current sheet to restore the client's switch.
+            if (!on && PlayerPolicies.BlocksAutomaticEncounter(Me, AutomaticEncounter.TurnOffPvp))
             {
                 await WriteAsync(stream, ConnectionProtocol.Push(Op.Lqn,
-                    ConnectionProtocol.BuildInfoMessage(InfoMessages.Warning, CannotHideWhileHunted)));
+                    ConnectionProtocol.BuildInfoMessage(InfoMessages.Warning, CannotDisablePvp)));
                 await CharacteristicsMessages.Live.SendAsync(SessionContext.Current);
                 return;
             }

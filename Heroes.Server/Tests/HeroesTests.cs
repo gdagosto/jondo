@@ -1,4 +1,5 @@
-﻿using System;
+using Jondo.Unity.ServerMods;
+using System;
 using System.Linq;
 using System.Threading.Tasks;
 using Jondo.Unity.Protocol;
@@ -25,15 +26,14 @@ namespace Jondo.Unity.Tests.World
     [Collection("Heroes gameplay")]
     public sealed class HeroesTests : IDisposable
     {
-        private readonly ServerModLoader _heroes = ServerModLoader.LoadConfigured(
-            Path.Combine(AppContext.BaseDirectory, "ServerModFixtures", "absent"), new ServerSettings(), Console.WriteLine);
+        private readonly HeroesTestPackage _package = new();
 
-        public void Dispose() => _heroes.Dispose();
+        public void Dispose() => _package.Dispose();
 
         private const long Account = 8_900_000_311;
         /// <summary>
         /// A map of these tests' own, no other test's connection on it: a hero connecting is drawn
-        /// for everybody on his map (HeroPresence), and on a map the others share, their pipes read
+        /// for everybody on his map (CompanionPresence), and on a map the others share, their pipes read
         /// a jsn they never asked for.
         /// </summary>
         private const long Map = 990_311_001;
@@ -54,26 +54,27 @@ namespace Jondo.Unity.Tests.World
             await using var pipe = await ClientPipe.OpenAsync(Account, master, Map, "Maestro-" + tag);
             try
             {
-                Assert.Equal("self", Heroes.Connect(pipe.Session, master));
-                Assert.Equal("account", Heroes.Connect(pipe.Session, stranger));
+                Assert.Equal("self", _package.Groups.Connect(pipe.Session, master));
+                Assert.Equal("account", _package.Groups.Connect(pipe.Session, stranger));
 
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, hero));
-                Assert.Equal("already", Heroes.Connect(pipe.Session, hero));
-                var connected = Assert.Single(Heroes.Of(master));
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, hero));
+                Assert.Equal("already", _package.Groups.Connect(pipe.Session, hero));
+                var connected = Assert.Single(_package.Groups.Of(master));
                 Assert.Equal(hero, connected.CharacterId);
+                var session = Assert.IsType<GameSession>(connected.Session);
                 // His own sheet, in a session nobody sends to and no map draws.
-                Assert.Equal("Heroe-" + tag, connected.Session.State.CharacterName);
-                Assert.Equal(1, connected.Session.State.Breed);
+                Assert.Equal("Heroe-" + tag, session.State.CharacterName);
+                Assert.Equal(1, session.State.Breed);
                 Assert.Null(SessionRegistry.FindByCharacter(hero));
 
-                Assert.False(Heroes.Disconnect(master + 1, hero));
-                Assert.True(Heroes.Disconnect(master, hero));
-                Assert.Empty(Heroes.Of(master));
-                Assert.Null(Heroes.AsHero(hero));
+                Assert.False(_package.Groups.Disconnect(master + 1, hero));
+                Assert.True(_package.Groups.Disconnect(master, hero));
+                Assert.Empty(_package.Groups.Of(master));
+                Assert.Null(_package.Groups.Find(hero));
             }
             finally
             {
-                Heroes.DisconnectAll(master);
+                _package.Groups.DisconnectAll(master);
                 SessionRegistry.Unregister(pipe.Session);
             }
         }
@@ -95,20 +96,20 @@ namespace Jondo.Unity.Tests.World
             await using var pipe = await ClientPipe.OpenAsync(Account, master, Map, "Maestro-" + tag);
             try
             {
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, optedIn));
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, lowLevel));
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, optedOut));
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, optedIn));
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, lowLevel));
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, optedOut));
                 // On by default (Keka-Bron/JondoEmu#206): forgetting to turn it on left heroes behind.
-                Assert.True(Heroes.SharesQuests(optedIn) && Heroes.SharesQuests(lowLevel) && Heroes.SharesQuests(optedOut));
-                Assert.True(Heroes.SetQuestSync(master, optedOut, false));
-                Assert.False(Heroes.SharesQuests(optedOut));
-                Assert.False(Heroes.SetQuestSync(master + 1, optedIn, true));
-                Assert.True(Heroes.SetQuestSync(master, optedIn, true));
-                Assert.True(Heroes.SetQuestSync(master, lowLevel, true));
+                Assert.True(_package.Groups.SharesQuests(optedIn) && _package.Groups.SharesQuests(lowLevel) && _package.Groups.SharesQuests(optedOut));
+                Assert.True(_package.Groups.SetQuestSync(master, optedOut, false));
+                Assert.False(_package.Groups.SharesQuests(optedOut));
+                Assert.False(_package.Groups.SetQuestSync(master + 1, optedIn, true));
+                Assert.True(_package.Groups.SetQuestSync(master, optedIn, true));
+                Assert.True(_package.Groups.SetQuestSync(master, lowLevel, true));
 
-                var eligible = Heroes.SessionOf(optedIn)!.State;
-                var ineligible = Heroes.SessionOf(lowLevel)!.State;
-                var disabled = Heroes.SessionOf(optedOut)!.State;
+                var eligible = CompanionSessions.SessionOf(optedIn)!.State;
+                var ineligible = CompanionSessions.SessionOf(lowLevel)!.State;
+                var disabled = CompanionSessions.SessionOf(optedOut)!.State;
                 eligible.CharacterLevel = disabled.CharacterLevel = pipe.Session.State.CharacterLevel = 150;
 
                 using (SessionContext.Push(pipe.Session))
@@ -123,17 +124,17 @@ namespace Jondo.Unity.Tests.World
                     Assert.False(ineligible.Quests!.Active(posterQuest));
                     Assert.False(disabled.Quests!.Active(posterQuest));
                     // The one who could not follow is kept, with why; the one turned off on purpose is not.
-                    var tooLow = Assert.Single(Heroes.LagsOf(pipe.Session, lowLevel));
-                    Assert.Equal((posterQuest, Heroes.QuestLagReason.Requirements), (tooLow.QuestId, tooLow.Reason));
-                    Assert.Empty(Heroes.LagsOf(pipe.Session, optedIn));
-                    Assert.Empty(Heroes.LagsOf(pipe.Session, optedOut));
+                    var tooLow = Assert.Single(_package.Groups.LagsOf(pipe.Session, lowLevel));
+                    Assert.Equal((posterQuest, QuestLagReason.Requirements), (tooLow.QuestId, tooLow.Reason));
+                    Assert.Empty(_package.Groups.LagsOf(pipe.Session, optedIn));
+                    Assert.Empty(_package.Groups.LagsOf(pipe.Session, optedOut));
 
                     Assert.True(await QuestEngine.StartSharedAsync(pipe.Session, cellarQuest));
                     Assert.True(eligible.Quests.Active(cellarQuest));
                     Assert.True(ineligible.Quests.Active(cellarQuest));
-                    Assert.True(Heroes.SetQuestSync(master, lowLevel, false));
+                    Assert.True(_package.Groups.SetQuestSync(master, lowLevel, false));
                     // Turned off: what he had not followed is no longer news.
-                    Assert.Empty(Heroes.LagsOf(pipe.Session, lowLevel));
+                    Assert.Empty(_package.Groups.LagsOf(pipe.Session, lowLevel));
                     eligible.MapId = ineligible.MapId = pipe.Session.State.MapId = cellar;
 
                     Assert.True(await QuestEngine.OnInteractiveUsedAsync(pipe.Session, cellar, tap));
@@ -148,7 +149,7 @@ namespace Jondo.Unity.Tests.World
                     Assert.False(QuestEngine.Log.ObjectiveDone(lureRat));
                     Assert.False(eligible.Quests.ObjectiveDone(lureRat));
                     Assert.Equal(1, Equipment.HowMany(lemonade));
-                    Assert.Empty(Heroes.LagsOf(pipe.Session, optedIn));
+                    Assert.Empty(_package.Groups.LagsOf(pipe.Session, optedIn));
                     Assert.Contains(await WarningsAsync(pipe), text => text.Contains("Nadie avanza") && text.Contains(" 1 "));
 
                     // Two, both in the master's bag: the hero's is handed to him, and each pours his own.
@@ -157,20 +158,20 @@ namespace Jondo.Unity.Tests.World
                     Assert.True(QuestEngine.Log.ObjectiveDone(lureRat));
                     Assert.True(eligible.Quests.ObjectiveDone(lureRat));
                     Assert.Equal(0, Equipment.HowMany(lemonade));
-                    using (SessionContext.Push(Heroes.SessionOf(optedIn)!)) Assert.Equal(0, Equipment.HowMany(lemonade));
-                    Assert.Empty(Heroes.LagsOf(pipe.Session, optedIn));
+                    using (SessionContext.Push(CompanionSessions.SessionOf(optedIn)!)) Assert.Equal(0, Equipment.HowMany(lemonade));
+                    Assert.Empty(_package.Groups.LagsOf(pipe.Session, optedIn));
                 }
 
-                Assert.True(Heroes.Disconnect(master, optedIn));
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, optedIn));
-                Assert.True(Heroes.SharesQuests(optedIn));
-                Assert.True(Heroes.SessionOf(optedIn)!.State.Quests!.ObjectiveDone(inspectCellar));
+                Assert.True(_package.Groups.Disconnect(master, optedIn));
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, optedIn));
+                Assert.True(_package.Groups.SharesQuests(optedIn));
+                Assert.True(CompanionSessions.SessionOf(optedIn)!.State.Quests!.ObjectiveDone(inspectCellar));
             }
             finally
             {
-                Heroes.SetQuestSync(master, optedIn, false);
-                Heroes.SetQuestSync(master, lowLevel, false);
-                Heroes.DisconnectAll(master);
+                _package.Groups.SetQuestSync(master, optedIn, false);
+                _package.Groups.SetQuestSync(master, lowLevel, false);
+                _package.Groups.DisconnectAll(master);
                 SessionRegistry.Unregister(pipe.Session);
                 foreach (long character in new[] { master, optedIn, lowLevel, optedOut })
                     DatabaseManager.DeleteCharacter(character, Account);
@@ -189,7 +190,7 @@ namespace Jondo.Unity.Tests.World
             await using var asking = await ClientPipe.OpenAsync(other, inviter, Map, "Invite-" + tag);
             try
             {
-                Assert.Equal("ok", Heroes.Connect(played.Session, hero));
+                Assert.Equal("ok", _package.Groups.Connect(played.Session, hero));
 
                 // The hero, among the others standing there: his master is the one asked (#217).
                 using (SessionContext.Push(asking.Session))
@@ -214,7 +215,7 @@ namespace Jondo.Unity.Tests.World
             {
                 if (Parties.Of(inviter) is { } left) Parties.Dissolve(left);
                 if (Parties.Of(master) is { } own) Parties.Dissolve(own);
-                Heroes.DisconnectAll(master);
+                _package.Groups.DisconnectAll(master);
                 SessionRegistry.Unregister(played.Session);
                 SessionRegistry.Unregister(asking.Session);
                 foreach (long character in new[] { master, hero })
@@ -232,16 +233,16 @@ namespace Jondo.Unity.Tests.World
             await using var pipe = await ClientPipe.OpenAsync(Account, master, Map, "Amo-" + tag);
             try
             {
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, hero));
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, hero));
                 await using var selected = await ClientPipe.OpenAsync(Account, 0, Map, enterWorld: false);
                 using (SessionContext.Push(selected.Session))
                     Assert.True(CharacterSelectionHandler.SelectCharacterOnServer(hero, selected.Session));
                 Assert.Equal(hero, selected.Session.CharacterId);
-                Assert.Empty(Heroes.Of(master));
+                Assert.Empty(_package.Groups.Of(master));
             }
             finally
             {
-                Heroes.DisconnectAll(master);
+                _package.Groups.DisconnectAll(master);
                 SessionRegistry.Unregister(pipe.Session);
             }
         }
@@ -255,15 +256,15 @@ namespace Jondo.Unity.Tests.World
             await using var pipe = await ClientPipe.OpenAsync(Account, master, Map, "Guia-" + tag);
             try
             {
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, hero));
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, hero));
 
-                Assert.False(Heroes.SetAutoPass(master + 1, hero, true));
-                Assert.True(Heroes.SetAutoPass(master, hero, true));
-                Assert.True(Heroes.PassesOnHisOwn(hero));
-                Assert.False(Heroes.PassesOnHisOwn(master));
+                Assert.False(_package.Groups.SetAutoPass(master + 1, hero, true));
+                Assert.True(_package.Groups.SetAutoPass(master, hero, true));
+                Assert.True(_package.Groups.ShouldPassTurn(hero));
+                Assert.False(_package.Groups.ShouldPassTurn(master));
 
-                Assert.False(Heroes.SetLootTo(master, master + 999));
-                Assert.True(Heroes.SetLootTo(master, hero));
+                Assert.False(_package.Groups.SetLootTo(master, master + 999));
+                Assert.True(_package.Groups.SetLootTo(master, hero));
                 var plan = new System.Collections.Generic.Dictionary<long, FightHandler.Reward>
                 {
                     [master] = new() { Xp = 100, Kamas = 10, Loot = new() { [287] = 2, [6903] = 1 } },
@@ -292,12 +293,12 @@ namespace Jondo.Unity.Tests.World
                 Assert.Equal(2, plan[hero].Loot[287]);
 
                 // The same one again: back to each his own.
-                Assert.True(Heroes.SetLootTo(master, hero));
-                Assert.Equal(0, Heroes.LootTo(master));
+                Assert.True(_package.Groups.SetLootTo(master, hero));
+                Assert.Equal(0, _package.Groups.LootTo(master));
             }
             finally
             {
-                Heroes.DisconnectAll(master);
+                _package.Groups.DisconnectAll(master);
                 SessionRegistry.Unregister(pipe.Session);
             }
         }
@@ -316,11 +317,11 @@ namespace Jondo.Unity.Tests.World
             var pipe = await ClientPipe.OpenAsync(Account + 7, first, Map, "Primero-" + tag);
             try
             {
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, second));
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, third));
-                Assert.True(Heroes.SetAutoPass(first, third, true));
-                Assert.True(Heroes.SetLootTo(first, third));
-                Heroes.DisconnectAll(pipe.Session);
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, second));
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, third));
+                Assert.True(_package.Groups.SetAutoPass(first, third, true));
+                Assert.True(_package.Groups.SetLootTo(first, third));
+                _package.Groups.MasterLeft(pipe.Session);
                 SessionRegistry.Unregister(pipe.Session);
             }
             finally
@@ -331,16 +332,16 @@ namespace Jondo.Unity.Tests.World
             await using var back = await ClientPipe.OpenAsync(Account + 7, second, Map, "Segundo-" + tag);
             try
             {
-                Heroes.Regroup(back.Session);
-                var group = Heroes.Of(second).Select(h => h.CharacterId).ToList();
+                _package.Groups.Regroup(back.Session);
+                var group = _package.Groups.Of(second).Select(h => h.CharacterId).ToList();
                 Assert.Equal(new[] { first, third }, group);
-                Assert.True(Heroes.PassesOnHisOwn(third));
-                Assert.False(Heroes.PassesOnHisOwn(first));
-                Assert.Equal(third, Heroes.LootTo(second));
+                Assert.True(_package.Groups.ShouldPassTurn(third));
+                Assert.False(_package.Groups.ShouldPassTurn(first));
+                Assert.Equal(third, _package.Groups.LootTo(second));
             }
             finally
             {
-                Heroes.DisconnectAll(second);
+                _package.Groups.DisconnectAll(second);
                 SessionRegistry.Unregister(back.Session);
             }
         }
@@ -355,17 +356,17 @@ namespace Jondo.Unity.Tests.World
             await using var pipe = await ClientPipe.OpenAsync(Account + 9, master, Map, "Rey-" + tag);
             try
             {
-                Assert.False(Heroes.AskSwitch(pipe.Session, hero));   // not a hero of his yet
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, hero));
-                Assert.True(Heroes.AskSwitch(pipe.Session, hero));
-                Assert.True(Heroes.SwitchPending(Account + 9));
-                Assert.Equal(hero, Heroes.TakeSwitch(Account + 9));
-                Assert.False(Heroes.SwitchPending(Account + 9));
-                Assert.Equal(0, Heroes.TakeSwitch(Account + 9));
+                Assert.False(_package.Groups.AskSwitch(pipe.Session, hero));   // not a hero of his yet
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, hero));
+                Assert.True(_package.Groups.AskSwitch(pipe.Session, hero));
+                Assert.True(_package.Groups.SwitchPending(Account + 9));
+                Assert.Equal(hero, _package.Groups.TakeSwitch(Account + 9));
+                Assert.False(_package.Groups.SwitchPending(Account + 9));
+                Assert.Equal(0, _package.Groups.TakeSwitch(Account + 9));
             }
             finally
             {
-                Heroes.DisconnectAll(master);
+                _package.Groups.DisconnectAll(master);
                 SessionRegistry.Unregister(pipe.Session);
             }
         }
@@ -399,15 +400,15 @@ namespace Jondo.Unity.Tests.World
                 if (MapManager.WalkableCells.TryGetValue(RealMap, out var cells)) MapManager.WalkableCells[Map] = cells;
                 using (SessionContext.Push(pipe.Session)) DatabaseManager.LoadCharacter(master);
                 pipe.Session.State.CellId = 300;
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, hero));
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, other));
-                Assert.True(Heroes.SetAutoPass(master, other, true));
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, hero));
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, other));
+                Assert.True(_package.Groups.SetAutoPass(master, other, true));
 
                 var party = Parties.Of(master);
                 Assert.NotNull(party);
 
-                Assert.Equal("hero", await Heroes.Gameplay!.SwitchAsync(pipe.Session, master + 999));
-                Assert.Equal("ok", await Heroes.Gameplay!.SwitchAsync(pipe.Session, hero));
+                Assert.Equal("hero", await _package.Groups.SwitchAsync(pipe.Session, master + 999));
+                Assert.Equal("ok", await _package.Groups.SwitchAsync(pipe.Session, hero));
 
                 // The same party: nobody out of it, the one played now leading it.
                 Assert.Same(party, Parties.Of(hero));
@@ -421,24 +422,24 @@ namespace Jondo.Unity.Tests.World
                 Assert.Same(pipe.Session, SessionRegistry.FindByCharacter(hero));
                 Assert.Null(SessionRegistry.FindByCharacter(master));
                 // The group in its round from the one after him: master, hero, other -- so other first.
-                Assert.Equal(new[] { other, master }, Heroes.Of(hero).Select(h => h.CharacterId));
-                Assert.True(Heroes.PassesOnHisOwn(other));
-                Assert.Null(Heroes.AsHero(hero));
+                Assert.Equal(new[] { other, master }, _package.Groups.Of(hero).Select(h => h.CharacterId));
+                Assert.True(_package.Groups.ShouldPassTurn(other));
+                Assert.Null(_package.Groups.Find(hero));
 
                 // The first hero taken in hand each time, as Tab does, goes round them all.
-                Assert.Equal("ok", await Heroes.Gameplay!.SwitchAsync(pipe.Session, other));
-                Assert.Equal(new[] { master, hero }, Heroes.Of(other).Select(h => h.CharacterId));
-                Assert.Equal("ok", await Heroes.Gameplay!.SwitchAsync(pipe.Session, master));
-                Assert.Equal(new[] { hero, other }, Heroes.Of(master).Select(h => h.CharacterId));
+                Assert.Equal("ok", await _package.Groups.SwitchAsync(pipe.Session, other));
+                Assert.Equal(new[] { master, hero }, _package.Groups.Of(other).Select(h => h.CharacterId));
+                Assert.Equal("ok", await _package.Groups.SwitchAsync(pipe.Session, master));
+                Assert.Equal(new[] { hero, other }, _package.Groups.Of(master).Select(h => h.CharacterId));
                 Assert.Same(party, Parties.Of(master));
                 Assert.Equal(master, party.LeaderId);
             }
             finally
             {
                 reading.Cancel();
-                Heroes.DisconnectAll(other);
-                Heroes.DisconnectAll(hero);
-                Heroes.DisconnectAll(master);
+                _package.Groups.DisconnectAll(other);
+                _package.Groups.DisconnectAll(hero);
+                _package.Groups.DisconnectAll(master);
                 SessionRegistry.Unregister(pipe.Session);
             }
         }
@@ -473,10 +474,10 @@ namespace Jondo.Unity.Tests.World
                 if (MapManager.Maps.TryGetValue(RealMap, out var real)) MapManager.Maps[Map] = real;
                 if (MapManager.WalkableCells.TryGetValue(RealMap, out var cells)) MapManager.WalkableCells[Map] = cells;
                 using (SessionContext.Push(pipe.Session)) DatabaseManager.LoadCharacter(master);
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, hero));
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, hero));
 
                 int before = codec.Frames.Count;
-                Assert.Equal("ok", await Heroes.Gameplay!.SwitchAsync(pipe.Session, hero));
+                Assert.Equal("ok", await _package.Groups.SwitchAsync(pipe.Session, hero));
 
                 var journal = Assert.Single(codec.Frames.Skip(before).Select(f => f.Content).OfType<Jondo.Unity.Protocol.Game.QuestsEvent>());
                 Assert.Contains(journal.ActiveQuests, quest => quest.QuestId == 1648);
@@ -487,8 +488,8 @@ namespace Jondo.Unity.Tests.World
             finally
             {
                 reading.Cancel();
-                Heroes.DisconnectAll(hero);
-                Heroes.DisconnectAll(master);
+                _package.Groups.DisconnectAll(hero);
+                _package.Groups.DisconnectAll(master);
                 SessionRegistry.Unregister(pipe.Session);
             }
         }
@@ -526,10 +527,10 @@ namespace Jondo.Unity.Tests.World
                 if (MapManager.Maps.TryGetValue(RealMap, out var real)) MapManager.Maps[Map] = real;
                 if (MapManager.WalkableCells.TryGetValue(RealMap, out var cells)) MapManager.WalkableCells[Map] = cells;
                 using (SessionContext.Push(pipe.Session)) DatabaseManager.LoadCharacter(master);
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, hero));
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, hero));
 
                 int before = codec.Frames.Count;
-                Assert.Equal("ok", await Heroes.Gameplay!.SwitchAsync(pipe.Session, hero));
+                Assert.Equal("ok", await _package.Groups.SwitchAsync(pipe.Session, hero));
 
                 var sent = codec.Frames.Skip(before).Select(f => f.Content).ToList();
                 var box = Assert.Single(sent.OfType<Jondo.Unity.Protocol.Game.QuestsFollowedEvent>());
@@ -543,8 +544,8 @@ namespace Jondo.Unity.Tests.World
             finally
             {
                 reading.Cancel();
-                Heroes.DisconnectAll(hero);
-                Heroes.DisconnectAll(master);
+                _package.Groups.DisconnectAll(hero);
+                _package.Groups.DisconnectAll(master);
                 SessionRegistry.Unregister(pipe.Session);
                 foreach (long character in new[] { master, hero })
                 {
@@ -571,10 +572,10 @@ namespace Jondo.Unity.Tests.World
             await using var pipe = await ClientPipe.OpenAsync(Account + 14, master, Map, "Receta-" + tag);
             try
             {
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, carries));
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, without));
-                var withIt = Heroes.SessionOf(carries)!;
-                var withoutIt = Heroes.SessionOf(without)!;
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, carries));
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, without));
+                var withIt = CompanionSessions.SessionOf(carries)!;
+                var withoutIt = CompanionSessions.SessionOf(without)!;
                 using (SessionContext.Push(pipe.Session))
                 {
                     QuestEngine.LoadFrom(master);
@@ -590,13 +591,13 @@ namespace Jondo.Unity.Tests.World
                     Assert.True(withIt.State.Quests!.ObjectiveDone(readIt));
                     Assert.False(withoutIt.State.Quests!.ObjectiveDone(readIt));
                     using (SessionContext.Push(withIt)) Assert.True(ItemCriteria.Holds("Qa=1637&Qo>9805&PO!16520"));
-                    var lag = Assert.Single(Heroes.LagsOf(pipe.Session, without));
-                    Assert.Equal((Heroes.QuestLagReason.MissingItems, recipe), (lag.Reason, lag.ItemId));
+                    var lag = Assert.Single(_package.Groups.LagsOf(pipe.Session, without));
+                    Assert.Equal((QuestLagReason.MissingItems, recipe), (lag.Reason, lag.ItemId));
                 }
             }
             finally
             {
-                Heroes.DisconnectAll(master);
+                _package.Groups.DisconnectAll(master);
                 SessionRegistry.Unregister(pipe.Session);
                 foreach (long character in new[] { master, carries, without })
                     DatabaseManager.DeleteCharacter(character, Account + 14);
@@ -626,10 +627,10 @@ namespace Jondo.Unity.Tests.World
             await using var pipe = await ClientPipe.OpenAsync(Account + 17, master, Map, "Lector-" + tag);
             try
             {
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, carries));
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, without));
-                var withIt = Heroes.SessionOf(carries)!;
-                var withoutIt = Heroes.SessionOf(without)!;
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, carries));
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, without));
+                var withIt = CompanionSessions.SessionOf(carries)!;
+                var withoutIt = CompanionSessions.SessionOf(without)!;
                 using (SessionContext.Push(pipe.Session))
                 {
                     QuestEngine.LoadFrom(master);
@@ -640,8 +641,8 @@ namespace Jondo.Unity.Tests.World
                     Assert.True(QuestEngine.Log!.ObjectiveDone(readLegend));
                     Assert.True(withIt.State.Quests!.ObjectiveDone(readLegend));
                     Assert.False(withoutIt.State.Quests!.ObjectiveDone(readLegend));
-                    var lag = Assert.Single(Heroes.LagsOf(pipe.Session, without), l => l.QuestId == legendQuest);
-                    Assert.Equal((Heroes.QuestLagReason.MissingItems, legend), (lag.Reason, lag.ItemId));
+                    var lag = Assert.Single(_package.Groups.LagsOf(pipe.Session, without), l => l.QuestId == legendQuest);
+                    Assert.Equal((QuestLagReason.MissingItems, legend), (lag.Reason, lag.ItemId));
 
                     pipe.Session.State.ElementsUsed.Add(notice);
                     await QuestEngine.OnReadAsync(pipe.Session, Map);
@@ -652,7 +653,7 @@ namespace Jondo.Unity.Tests.World
             }
             finally
             {
-                Heroes.DisconnectAll(master);
+                _package.Groups.DisconnectAll(master);
                 SessionRegistry.Unregister(pipe.Session);
                 foreach (long character in new[] { master, carries, without })
                     DatabaseManager.DeleteCharacter(character, Account + 17);
@@ -690,8 +691,8 @@ namespace Jondo.Unity.Tests.World
             });
             try
             {
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, hero));
-                var follower = Heroes.SessionOf(hero)!;
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, hero));
+                var follower = CompanionSessions.SessionOf(hero)!;
                 pipe.Session.State.CharacterLevel = follower.State.CharacterLevel = 20;
                 using (SessionContext.Push(pipe.Session))
                 {
@@ -708,13 +709,13 @@ namespace Jondo.Unity.Tests.World
                     Assert.Equal(astrub, follower.State.MapId);
                     Assert.True(QuestEngine.Log!.ObjectiveDone(crossed));
                     Assert.True(follower.State.Quests!.ObjectiveDone(crossed));
-                    Assert.Empty(Heroes.LagsOf(pipe.Session, hero));
+                    Assert.Empty(_package.Groups.LagsOf(pipe.Session, hero));
                 }
             }
             finally
             {
                 reading.Cancel();
-                Heroes.DisconnectAll(master);
+                _package.Groups.DisconnectAll(master);
                 SessionRegistry.Unregister(pipe.Session);
                 foreach (long character in new[] { master, hero })
                     DatabaseManager.DeleteCharacter(character, Account + 15);
@@ -749,8 +750,8 @@ namespace Jondo.Unity.Tests.World
             });
             try
             {
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, hero));
-                var follower = Heroes.SessionOf(hero)!;
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, hero));
+                var follower = CompanionSessions.SessionOf(hero)!;
                 pipe.Session.State.CharacterLevel = follower.State.CharacterLevel = 20;
                 using (SessionContext.Push(pipe.Session))
                 {
@@ -771,7 +772,7 @@ namespace Jondo.Unity.Tests.World
             finally
             {
                 reading.Cancel();
-                Heroes.DisconnectAll(master);
+                _package.Groups.DisconnectAll(master);
                 SessionRegistry.Unregister(pipe.Session);
                 foreach (long character in new[] { master, hero })
                     DatabaseManager.DeleteCharacter(character, Account + 16);
@@ -804,9 +805,9 @@ namespace Jondo.Unity.Tests.World
             long uid = DatabaseManager.NextItemUid();
             try
             {
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, hero));
-                Assert.Equal("ok", Heroes.Connect(other.Session, strangersHero));
-                var heroSession = Heroes.SessionOf(hero)!;
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, hero));
+                Assert.Equal("ok", _package.Groups.Connect(other.Session, strangersHero));
+                var heroSession = CompanionSessions.SessionOf(hero)!;
                 pipe.Session.State.Kamas = 5_000;
                 long heroKamas = heroSession.State.Kamas;
                 using (SessionContext.Push(pipe.Session))
@@ -824,7 +825,7 @@ namespace Jondo.Unity.Tests.World
                 Assert.Equal(stranger, asked!.TargetId);
                 Assert.False(asked.Accepted);
                 Assert.Same(asked, other.Session.State.Trade);
-                Assert.Null(Heroes.SessionOf(strangersHero)!.State.Trade);
+                Assert.Null(CompanionSessions.SessionOf(strangersHero)!.State.Trade);
                 using (SessionContext.Push(other.Session)) Assert.True(await TradeHandler.CloseAsync());
                 Assert.Null(pipe.Session.State.Trade);
 
@@ -858,8 +859,8 @@ namespace Jondo.Unity.Tests.World
                 foreach (long id in new[] { master, hero })
                     foreach (var row in DatabaseManager.LoadInventory(id))
                         DatabaseManager.DestroyCharacterItem(id, row.Uid, 0);
-                Heroes.DisconnectAll(master);
-                Heroes.DisconnectAll(stranger);
+                _package.Groups.DisconnectAll(master);
+                _package.Groups.DisconnectAll(stranger);
                 SessionRegistry.Unregister(pipe.Session);
                 SessionRegistry.Unregister(other.Session);
             }
@@ -891,20 +892,20 @@ namespace Jondo.Unity.Tests.World
             {
                 pipe.Session.State.CellId = 300;
                 Assert.False(SessionRegistry.IsOnline(hero));
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, hero));
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, hero));
 
                 Assert.True(SessionRegistry.IsOnline(hero));
-                var shown = Assert.Single(HeroPresence.On(Map), h => h.Character.Id == hero);
+                var shown = Assert.Single(CompanionPresence.On(Map), h => h.Character.Id == hero);
                 Assert.NotEqual(-1, shown.Cell);
-                Assert.Equal(Map, Heroes.SessionOf(hero)!.State.MapId);
+                Assert.Equal(Map, CompanionSessions.SessionOf(hero)!.State.MapId);
 
-                Assert.True(Heroes.Disconnect(master, hero));
+                Assert.True(_package.Groups.Disconnect(master, hero));
                 Assert.False(SessionRegistry.IsOnline(hero));
-                Assert.DoesNotContain(HeroPresence.On(Map), h => h.Character.Id == hero);
+                Assert.DoesNotContain(CompanionPresence.On(Map), h => h.Character.Id == hero);
             }
             finally
             {
-                Heroes.DisconnectAll(master);
+                _package.Groups.DisconnectAll(master);
                 SessionRegistry.Unregister(pipe.Session);
             }
         }
@@ -935,13 +936,13 @@ namespace Jondo.Unity.Tests.World
             {
                 int start = cells[0], end = cells[cells.Count / 2];
                 pipe.Session.State.CellId = start;
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, first));
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, second));
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, first));
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, second));
 
                 pipe.Session.State.CellId = end;
-                await HeroPresence.MasterWalkedAsync(pipe.Session, new List<int> { start, end });
+                await CompanionPresence.MasterWalkedAsync(pipe.Session, new List<int> { start, end });
 
-                int a = Heroes.SessionOf(first)!.State.CellId, b = Heroes.SessionOf(second)!.State.CellId;
+                int a = CompanionSessions.SessionOf(first)!.State.CellId, b = CompanionSessions.SessionOf(second)!.State.CellId;
                 Assert.NotEqual(end, a);
                 Assert.NotEqual(end, b);
                 Assert.NotEqual(a, b);
@@ -951,7 +952,7 @@ namespace Jondo.Unity.Tests.World
             finally
             {
                 reading.Cancel();
-                Heroes.DisconnectAll(master);
+                _package.Groups.DisconnectAll(master);
                 SessionRegistry.Unregister(pipe.Session);
             }
         }
@@ -977,24 +978,24 @@ namespace Jondo.Unity.Tests.World
             });
             try
             {
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, first));
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, second));
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, first));
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, second));
 
                 var party = Parties.Of(master);
                 Assert.NotNull(party);
                 Assert.Equal(master, party!.LeaderId);
                 Assert.Equal(new[] { master, first, second }, Parties.MembersOf(party));
 
-                Assert.True(Heroes.Disconnect(master, first));
+                Assert.True(_package.Groups.Disconnect(master, first));
                 Assert.Equal(new[] { master, second }, Parties.MembersOf(party));
-                Assert.True(Heroes.Disconnect(master, second));
+                Assert.True(_package.Groups.Disconnect(master, second));
                 Assert.Null(Parties.Of(master));
                 Assert.Null(Parties.Of(second));
             }
             finally
             {
                 reading.Cancel();
-                Heroes.DisconnectAll(master);
+                _package.Groups.DisconnectAll(master);
                 SessionRegistry.Unregister(pipe.Session);
             }
         }
@@ -1034,8 +1035,8 @@ namespace Jondo.Unity.Tests.World
                 Assert.Equal(1, made.Sex);
                 Assert.Equal(1, made.Level);
 
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, id));
-                Assert.Equal(new[] { id }, Heroes.Of(master).Select(h => h.CharacterId));
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, id));
+                Assert.Equal(new[] { id }, _package.Groups.Of(master).Select(h => h.CharacterId));
 
                 // The slots run out: ServerSettings.CharacterSlots, two made already.
                 for (int i = 0; i < Jondo.Unity.Server.Network.Connection.ConnectionService.MaxCharactersPerServer - 2; i++)
@@ -1045,7 +1046,7 @@ namespace Jondo.Unity.Tests.World
             finally
             {
                 reading.Cancel();
-                Heroes.DisconnectAll(master);
+                _package.Groups.DisconnectAll(master);
                 SessionRegistry.Unregister(pipe.Session);
             }
         }
@@ -1060,9 +1061,9 @@ namespace Jondo.Unity.Tests.World
             await using var pipe = await ClientPipe.OpenAsync(Account, master, Map, "Jefe-" + tag);
             try
             {
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, hero));
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, busy));
-                var busySession = Heroes.SessionOf(busy)!;
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, hero));
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, busy));
+                var busySession = CompanionSessions.SessionOf(busy)!;
                 busySession.State.IsInFight = true;
                 busySession.State.FightId = 990_311;
 
@@ -1086,15 +1087,15 @@ namespace Jondo.Unity.Tests.World
                 Assert.Equal(fighter.HechizosDeInvocado.Count + 1, jyy.Count(f => f.FieldNumber == 6));
                 Assert.True(jyy.Count(f => f.FieldNumber == 7) > 1);
                 Assert.NotEqual(fight.Azul.Single(f => f.Id == master).CellId, fighter.CellId);
-                Assert.True(Heroes.SessionOf(hero)!.State.IsInFight);
+                Assert.True(CompanionSessions.SessionOf(hero)!.State.IsInFight);
 
                 // In a fight, he stays connected until it is over.
-                Assert.False(Heroes.Disconnect(master, hero));
+                Assert.False(_package.Groups.Disconnect(master, hero));
             }
             finally
             {
                 await RemoveFightAsync(pipe);
-                Heroes.DisconnectAll(master);
+                _package.Groups.DisconnectAll(master);
                 SessionRegistry.Unregister(pipe.Session);
             }
         }
@@ -1111,13 +1112,13 @@ namespace Jondo.Unity.Tests.World
             try
             {
                 if (withHeroes)
-                    Assert.Equal("ok", Heroes.Connect(pipe.Session, hero));
+                    Assert.Equal("ok", _package.Groups.Connect(pipe.Session, hero));
                 else
                 {
                     Dispose();
                     Assert.Null(FightParticipants.Policy);
                 }
-                var participant = withHeroes ? Heroes.SessionOf(hero)! : pipe.Session;
+                var participant = withHeroes ? CompanionSessions.SessionOf(hero)! : pipe.Session;
                 long xp = participant.State.Experience;
                 long kamas = participant.State.Kamas;
                 long masterKamas = pipe.Session.State.Kamas;
@@ -1157,7 +1158,7 @@ namespace Jondo.Unity.Tests.World
             finally
             {
                 await RemoveFightAsync(pipe);
-                Heroes.DisconnectAll(master);
+                _package.Groups.DisconnectAll(master);
             }
         }
 
@@ -1239,18 +1240,18 @@ namespace Jondo.Unity.Tests.World
             await using var pipe = await ClientPipe.OpenAsync(Account, master, Map, "Recluta-" + tag);
             try
             {
-                Assert.Equal("ok", Heroes.Connect(pipe.Session, hero));
+                Assert.Equal("ok", _package.Groups.Connect(pipe.Session, hero));
                 var fight = await OpenFightAsync(pipe, solo: true);
 
                 Assert.Single(fight.Azul);
-                Assert.False(Heroes.SessionOf(hero)!.State.IsInFight);
+                Assert.False(CompanionSessions.SessionOf(hero)!.State.IsInFight);
                 // Nor anybody from the map: the side is full at one.
                 Assert.Equal(FightInstance.JoinRefusal.TeamFull, fight.CanJoin(FightInstance.Azules, FightHandler.CapOf(fight)));
             }
             finally
             {
                 await RemoveFightAsync(pipe);
-                Heroes.DisconnectAll(master);
+                _package.Groups.DisconnectAll(master);
                 SessionRegistry.Unregister(pipe.Session);
             }
         }

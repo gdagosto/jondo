@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -2178,7 +2178,7 @@ namespace Jondo.Unity.Server.Handlers
                 || session.State.IsInFight || session.State.SpectatingFightId != 0) return;
             using var context = SessionContext.Push(session); // Legacy hunt checks and fight creation.
             if (await DreamHandler.GuestMayNotFightAsync(session)) return;
-            if (await HuntGameplay.HoldsAsync(session.Stream, HuntActivity.Fight)) return;
+            if (await PlayerPolicies.BlocksActivityAsync(session.Stream, PlayerActivity.Fight)) return;
             if (PhantomHandler.CannotFight(session.CharacterId)) return;
 
             long here = session.MapId;
