@@ -2,6 +2,7 @@ using System;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 using Jondo.Unity.Protocol;
+using Jondo.Unity.Server.Mods;
 using Jondo.Unity.Server.Network;
 
 namespace Jondo.Unity.Server.Managers
@@ -65,16 +66,19 @@ namespace Jondo.Unity.Server.Managers
             if (experience <= 0) return false;
             state.Experience += experience;
 
-            bool up = false;
             int newLevel = ExperienceTable.LevelForXp(state.Experience);
-            if (newLevel > state.CharacterLevel)
+            bool up = newLevel > state.CharacterLevel;
+            if (up)
             {
                 int points = Math.Max(0, Math.Min(newLevel, MaxLevelWithPoints)
                                          - Math.Min(state.CharacterLevel, MaxLevelWithPoints));
                 if (points > 0) state.CharacterRemainingPoints += points * 5;
                 state.CharacterLevel = newLevel;
-                up = true;
+            }
 
+            CharacterProgressionEvents.ExperienceGained(session);
+            if (up)
+            {
                 await Jondo.Protocol.NetworkMessage.WriteFrameAsync(stream,
                     ConnectionProtocol.Push(Op.Kua, ConnectionProtocol.BuildLevelUp(newLevel)));
 

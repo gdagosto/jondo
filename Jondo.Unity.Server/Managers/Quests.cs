@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Threading.Tasks;
 using Jondo.Unity.Protocol;
+using Jondo.Unity.Server.Mods;
 using Jondo.Unity.Server.Network;
 using Jondo.Unity.World.Quests;
 using Game = Jondo.Unity.Protocol.Game;
@@ -2524,6 +2525,7 @@ namespace Jondo.Unity.Server.Managers
             int first = -(questId * QuestMarkSpan + QuestMarkSpan - 1), last = -(questId * QuestMarkSpan);
             int cleared = SessionContext.State.ElementsUsed.RemoveWhere(e => e >= first && e <= last);
             if (cleared > 0) DatabaseManager.ForgetElements(characterId, first, last);
+            CharacterProgressionEvents.QuestChanged(SessionContext.Current, questId);
             Console.WriteLine($"[Quests] Quest {questId} is offered again" +
                               (cleared > 0 ? $", its {cleared} mark(s) wiped." : "."));
         }
@@ -2556,14 +2558,19 @@ namespace Jondo.Unity.Server.Managers
 
         private static void Save(int questId, QuestRun run)
         {
-            long characterId = SessionContext.State.CharacterId;
-            if (characterId == 0) return;
+            var session = SessionContext.Current;
+            if (session.CharacterId == 0) return;
 
+            DatabaseManager.SaveQuestProgress(session.CharacterId, ProgressRow(questId, run));
+            CharacterProgressionEvents.QuestChanged(session, questId);
+        }
+
+        internal static DatabaseManager.QuestRow ProgressRow(int questId, QuestRun run)
+        {
             long finishedAt = run.Finished && run.FinishedAt != default
                 ? new DateTimeOffset(run.FinishedAt).ToUnixTimeSeconds()
                 : 0;
-            DatabaseManager.SaveQuestProgress(characterId, new DatabaseManager.QuestRow(
-                questId, run.StepId, QuestLog.Pack(run), run.Finished, finishedAt));
+            return new DatabaseManager.QuestRow(questId, run.StepId, QuestLog.Pack(run), run.Finished, finishedAt);
         }
     }
 }
